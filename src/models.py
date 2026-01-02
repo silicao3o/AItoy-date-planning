@@ -37,3 +37,4 @@ class TripState(TypedDict):
     location_type: Optional[str] # "region" or "spot"
     start_location: Optional[Location] # 시작 장소 (spot일 경우)
     preferred_category: Optional[str] # 선호하는 놀거리 카테고리 (HIL 용)
+    preferred_food: Optional[str] # 선호하는 음식 종류 (HIL 용)

@@ -33,6 +33,7 @@ class TripPlannerAgent:
         # 노드 추가
         workflow.add_node("analyze_input", self.analyze_input)
         workflow.add_node("ask_preference", self.ask_preference)  # HIL Node
+        workflow.add_node("ask_food_preference", self.ask_food_preference) # HIL Node for Food
         workflow.add_node("search_attractions", self.search_attractions)
         workflow.add_node("search_restaurants", self.search_restaurants)
         workflow.add_node("search_cafes", self.search_cafes)
@@ -49,12 +50,13 @@ class TripPlannerAgent:
             self.route_by_location_type,
             {
                 "region": "ask_preference", # Region이면 물어보러 감
-                "spot": "search_restaurants"
+                "spot": "ask_food_preference"
             }
         )
 
         workflow.add_edge("ask_preference", "search_attractions")
-        workflow.add_edge("search_attractions", "search_restaurants")
+        workflow.add_edge("search_attractions", "ask_food_preference")
+        workflow.add_edge("ask_food_preference", "search_restaurants")
         workflow.add_edge("search_restaurants", "search_cafes")
         workflow.add_edge("search_cafes", "search_bars")
         workflow.add_edge("search_bars", "create_schedule")
@@ -74,7 +76,7 @@ class TripPlannerAgent:
         # ask_preference 노드 실행 후 중단 (사용자 입력 대기)
         return workflow.compile(
             checkpointer=self.memory,
-            interrupt_after=["ask_preference"]
+            interrupt_after=["ask_preference", "ask_food_preference"]
         )
 
     def route_by_location_type(self, state: TripState) -> str:
@@ -137,6 +139,12 @@ VALUE: [정제된 지역명 또는 장소명]
     async def ask_preference(self, state: TripState) -> TripState:
         """사용자에게 놀거리 선호도 질문 (HIL용)"""
         msg = "어떤 스타일의 놀거리를 원하시나요? (예: 전시, 이색체험, 힐링, 쇼핑 등)"
+        state["messages"].append(msg)
+        return state
+
+    async def ask_food_preference(self, state: TripState) -> TripState:
+        """사용자에게 음식 선호도 질문 (HIL용)"""
+        msg = "어떤 종류의 음식을 선호하시나요? (예: 한식/양식/중식/일식/회 등) '상관없음'이라고 하시면 추천해드릴게요."
         state["messages"].append(msg)
         return state
 
@@ -232,12 +240,24 @@ VALUE: [정제된 지역명 또는 장소명]
 
         all_restaurants = []
         for loc in current_locations:
-            restaurants = await self.kakao_client.search_restaurants_nearby(
-                x=loc.x,
-                y=loc.y,
-                radius=500,
-                size=3
-            )
+            if state.get("preferred_food") and state["preferred_food"] != "상관없음":
+                # 음식 취향 반영 검색
+                keyword = f"{state['preferred_food']} 맛집"
+                restaurants = await self.kakao_client.search_keyword_nearby(
+                    keyword=keyword,
+                    x=loc.x,
+                    y=loc.y,
+                    radius=500,
+                    size=3
+                )
+            else:
+                 # 일반 맛집 검색
+                restaurants = await self.kakao_client.search_restaurants_nearby(
+                    x=loc.x,
+                    y=loc.y,
+                    radius=500,
+                    size=3
+                )
             all_restaurants.extend(restaurants)
 
         # 중복 제거
@@ -426,7 +446,8 @@ VALUE: [정제된 지역명 또는 장소명]
                 "needs_replan": False,
                 "location_type": None,
                 "start_location": None,
-                "preferred_category": None
+                "preferred_category": None,
+                "preferred_food": None
             }
             # 첫 실행
             await self.graph.ainvoke(initial_state, config)
@@ -463,8 +484,15 @@ VALUE: [정제된 지역명 또는 장소명]
         if not current_state.next:
              return {"status": "error", "message": "No active conversation to resume"}
 
-        # preferred_category 업데이트
-        await self.graph.aupdate_state(config, {"preferred_category": category})
+        # Determine which preference to update based on the next step
+        next_node = current_state.next[0] if isinstance(current_state.next, tuple) else current_state.next
+        
+        if next_node == "search_attractions":
+            await self.graph.aupdate_state(config, {"preferred_category": category})
+        elif next_node == "search_restaurants":
+            await self.graph.aupdate_state(config, {"preferred_food": category})
+        else:
+             print(f"[WARN] Unknown next step for feedback: {next_node}")
         
         # 실행 재개 (None을 입력으로 주어 멈춘 곳 부터 시작)
         await self.graph.ainvoke(None, config)
