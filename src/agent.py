@@ -60,15 +60,26 @@ class TripPlannerAgent:
         workflow.add_edge("search_restaurants", "search_cafes")
         workflow.add_edge("search_cafes", "search_bars")
         workflow.add_edge("search_bars", "create_schedule")
-        workflow.add_edge("create_schedule", "check_quality")
+        workflow.add_node("ask_refinement", self.ask_refinement) # Multi-turn HIL
+        
+        # 엣지 정의
+        workflow.set_entry_point("analyze_input")
+        
+        # ... (Existing conditional edges) ...
+        
+        # refinement Loop
+        workflow.add_edge("create_schedule", "ask_refinement")
+        workflow.add_edge("ask_refinement", "check_quality") # check_quality에서 분기 처리
 
-        # 조건부 엣지: 품질 체크 후 재검색 또는 종료
+        # 조건부 엣지: 품질 체크 또는 피드백 후 재검색 또는 종료
         workflow.add_conditional_edges(
             "check_quality",
             self.should_replan,
             {
                 "replan_region": "search_attractions",
                 "replan_spot": "search_restaurants",
+                "replan_food": "search_restaurants",
+                "replan_cafe": "search_cafes",
                 "end": END
             }
         )
@@ -76,7 +87,7 @@ class TripPlannerAgent:
         # ask_preference 노드 실행 후 중단 (사용자 입력 대기)
         return workflow.compile(
             checkpointer=self.memory,
-            interrupt_after=["ask_preference", "ask_food_preference"]
+            interrupt_after=["ask_preference", "ask_food_preference", "ask_refinement"]
         )
 
     def route_by_location_type(self, state: TripState) -> str:
@@ -167,14 +178,33 @@ VALUE: [정제된 지역명 또는 장소명]
             # KakaoMapClient.search_place 로 지역 센터 좌표를 구하거나
             # 그냥 keyword search ("홍대 방탈출") 형태로 호출해야 함.
             
-            # 기존 search_attractions는 지역명 조합임.
-            # 여기서는 클라이언트 내부 로직에 의존하기보다 직접 키워드를 만들어서 검색
-            keywords = [
-                f"{region} {preference}",
-                f"{region} {preference} 추천",
-                f"{region} 유명한 {preference}"
-            ]
+            # 1. 키워드 확장 (LLM 활용)
+            # 사용자가 "전시"라고만 해도 "미술관", "갤러리" 등을 검색하도록 확장
+            expansion_prompt = f"""
+            '{region}' 지역에서 '{preference}'와(과) 관련된 장소를 카카오맵에서 찾으려고 해.
+            검색 결과가 잘 나올 수 있는 구체적인 검색 키워드 3~4개를 한국어로 제시해줘.
             
+            형식: 키워드1, 키워드2, 키워드3
+            예시: 이태원 미술관, 이태원 갤러리, 이태원 전시회
+            """
+            
+            try:
+                # LLM에게 키워드 추천 받기
+                expansion_msg = [HumanMessage(content=expansion_prompt)]
+                expansion_res = await self.llm.ainvoke(expansion_msg)
+                content = expansion_res.content.strip()
+                
+                # 쉼표로 구분하여 파싱
+                keywords = [k.strip() for k in content.split(",") if k.strip()]
+                print(f"[DEBUG] Expanded Keywords: {keywords}")
+                
+                # 혹시 파싱 실패하거나 빈 값이면 기본값 사용
+                if not keywords:
+                    keywords = [f"{region} {preference}"]
+            except Exception as e:
+                print(f"[WARN] Keyword expansion failed: {e}")
+                keywords = [f"{region} {preference}"]
+
             # 직접 구현
             attractions = []
             async with httpx.AsyncClient() as client:
@@ -269,6 +299,7 @@ VALUE: [정제된 지역명 또는 장소명]
                 unique_restaurants.append(r)
 
         state["restaurants"] = unique_restaurants[:5]
+        
         state["messages"].append(f"✓ 음식점 {len(unique_restaurants)}개 발견")
 
         return state
@@ -302,6 +333,7 @@ VALUE: [정제된 지역명 또는 장소명]
                 unique_cafes.append(c)
 
         state["desserts"] = unique_cafes[:3]
+        
         state["messages"].append(f"✓ 디저트/카페 {len(unique_cafes)}개 발견")
         return state
 
@@ -339,6 +371,7 @@ VALUE: [정제된 지역명 또는 장소명]
                 unique_bars.append(b)
 
         state["bars"] = unique_bars[:3]
+        
         state["messages"].append(f"✓ 술집 {len(unique_bars)}개 발견")
         return state
 
@@ -402,14 +435,56 @@ VALUE: [정제된 지역명 또는 장소명]
 
         return state
 
+    async def ask_refinement(self, state: TripState) -> TripState:
+        """최종 스케줄 확인 및 수정 요청 (HIL)"""
+        msg = "생성된 코스가 마음에 드시나요? '완료'라고 하시면 종료하고, 수정하고 싶다면 '카페 바꿔줘', '음식점 다른 곳' 등으로 말씀해주세요."
+        state["messages"].append(msg)
+        return state
+
     async def check_quality(self, state: TripState) -> TripState:
-        """스케줄 품질 체크"""
+        """스케줄 품질 체크 및 피드백 반영"""
+        
+        # 1. 사용자 피드백 처리 (ask_refinement 이후)
+        feedback = state.get("user_feedback") # provide_feedback에서 넣어줄 예정
+        if feedback:
+            # LLM으로 피드백 분석
+            msgs = [
+                SystemMessage(content="""
+                사용자의 피드백을 분석하여 다음 행동을 결정하세요.
+                - 음식점 변경 요청 -> ACTION: replan_food
+                - 카페 변경 요청 -> ACTION: replan_cafe
+                - 전체 다시 -> ACTION: replan_region
+                - 완료/좋음 -> ACTION: end
+                
+                응답 형식: ACTION: [action_code]
+                """),
+                HumanMessage(content=feedback)
+            ]
+            res = await self.llm.ainvoke(msgs)
+            content = res.content.strip()
+            
+            action = "end"
+            if "replan_food" in content: action = "replan_food"
+            elif "replan_cafe" in content: action = "replan_cafe"
+            elif "replan_region" in content: action = "replan_region"
+            
+            state["next_action"] = action
+            state["messages"].append(f"✓ 피드백 반영: {action}")
+            state["user_feedback"] = None # Reset
+            
+            if action != "end":
+                 state["needs_replan"] = True
+                 return state
+
+        # 2. 품질 체크 (기존 로직)
         if len(state["schedule"]) < 2 and state["search_radius"] < 5000:
             state["needs_replan"] = True
             state["search_radius"] += 1000
             state["messages"].append(f"! 검색 결과 부족, 반경 확대: {state['search_radius']}m")
+            state["next_action"] = "replan_region" # Default fallback
         else:
             state["needs_replan"] = False
+            state["next_action"] = "end"
             state["messages"].append("✓ 플래닝 완료")
 
         return state
@@ -417,9 +492,12 @@ VALUE: [정제된 지역명 또는 장소명]
     def should_replan(self, state: TripState) -> str:
         """재계획 필요 여부 판단"""
         if state["needs_replan"]:
-            if state.get("location_type") == "spot":
+            action = state.get("next_action", "replan_region")
+            # 스팟/지역 기본 구분
+            if action == "replan_spot" or (state.get("location_type") == "spot" and action == "replan_region"):
                 return "replan_spot"
-            return "replan_region"
+                
+            return action # replan_food, replan_cafe, replan_region, etc.
         return "end"
 
     async def plan_trip(self, region: str, thread_id: str) -> dict:
@@ -491,6 +569,9 @@ VALUE: [정제된 지역명 또는 장소명]
             await self.graph.aupdate_state(config, {"preferred_category": category})
         elif next_node == "search_restaurants":
             await self.graph.aupdate_state(config, {"preferred_food": category})
+        elif next_node == "check_quality":
+             # ask_refinement 다음 단계가 check_quality이므로 여기서 피드백 처리
+             await self.graph.aupdate_state(config, {"user_feedback": category})
         else:
              print(f"[WARN] Unknown next step for feedback: {next_node}")
         
@@ -507,7 +588,7 @@ VALUE: [정제된 지역명 또는 장소명]
                  "messages": final_state.values.get("messages", []),
                  "thread_id": thread_id
             }
-            
+             
         return {
             "status": "completed",
             "result": final_state.values,
