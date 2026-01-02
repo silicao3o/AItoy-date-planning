@@ -14,7 +14,6 @@ class KakaoMapClient:
 
     def __init__(self):
         self.api_key = os.getenv("KAKAO_REST_API_KEY")
-        # self.api_key = "2b0e2842adcacfeb9731a68eb4b42048"
 
         # 디버깅 출력
         print(f"🔑 API Key loaded: {self.api_key[:10] if self.api_key else 'None'}...")
@@ -83,22 +82,55 @@ class KakaoMapClient:
 
         return unique_results[:size]
 
-    async def search_restaurants_nearby(
+    async def search_place(self, query: str) -> Optional[Location]:
+        """특정 장소 하나 검색 (제일 정확도 높은 것)"""
+        async with httpx.AsyncClient() as client:
+            params = {
+                "query": query,
+                "size": 1,
+                "sort": "accuracy"
+            }
+            response = await client.get(
+                f"{self.BASE_URL}/search/keyword.json",
+                headers=self.headers,
+                params=params
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            if not data.get("documents"):
+                return None
+                
+            doc = data["documents"][0]
+            return Location(
+                name=doc["place_name"],
+                category=doc["category_name"],
+                address=doc["address_name"],
+                x=float(doc["x"]),
+                y=float(doc["y"]),
+                phone=doc.get("phone"),
+                place_url=doc.get("place_url"),
+                distance=int(doc.get("distance", 0)) if doc.get("distance") else None
+            )
+
+    async def search_category(
             self,
+            category_code: str,
             x: float,
             y: float,
             radius: int = 500,
-            size: int = 5
+            size: int = 5,
+            sort: str = "distance"
     ) -> List[Location]:
-        """특정 좌표 주변 음식점 검색"""
+        """카테고리별 장소 검색 (FD6: 음식점, CE7: 카페 등)"""
         async with httpx.AsyncClient() as client:
             params = {
-                "category_group_code": "FD6",  # 음식점 카테고리
+                "category_group_code": category_code,
                 "x": x,
                 "y": y,
                 "radius": radius,
                 "size": size,
-                "sort": "distance"
+                "sort": sort
             }
 
             response = await client.get(
@@ -109,7 +141,7 @@ class KakaoMapClient:
             response.raise_for_status()
             data = response.json()
 
-            restaurants = []
+            results = []
             for doc in data.get("documents", []):
                 location = Location(
                     name=doc["place_name"],
@@ -121,6 +153,59 @@ class KakaoMapClient:
                     place_url=doc.get("place_url"),
                     distance=int(doc["distance"])
                 )
-                restaurants.append(location)
+                results.append(location)
 
-            return restaurants
+            return results
+
+    async def search_keyword_nearby(
+            self,
+            keyword: str,
+            x: float,
+            y: float,
+            radius: int = 500,
+            size: int = 5
+    ) -> List[Location]:
+        """좌표 주변 키워드 검색 (술집 등)"""
+        async with httpx.AsyncClient() as client:
+            params = {
+                "query": keyword,
+                "x": x,
+                "y": y,
+                "radius": radius,
+                "size": size,
+                "sort": "distance"
+            }
+
+            response = await client.get(
+                f"{self.BASE_URL}/search/keyword.json",
+                headers=self.headers,
+                params=params
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            results = []
+            for doc in data.get("documents", []):
+                location = Location(
+                    name=doc["place_name"],
+                    category=doc["category_name"],
+                    address=doc["address_name"],
+                    x=float(doc["x"]),
+                    y=float(doc["y"]),
+                    phone=doc.get("phone"),
+                    place_url=doc.get("place_url"),
+                    distance=int(doc.get("distance", 0))
+                )
+                results.append(location)
+
+            return results
+
+    async def search_restaurants_nearby(
+            self,
+            x: float,
+            y: float,
+            radius: int = 500,
+            size: int = 5
+    ) -> List[Location]:
+        """특정 좌표 주변 음식점 검색 (Wrapper)"""
+        return await self.search_category("FD6", x, y, radius, size)

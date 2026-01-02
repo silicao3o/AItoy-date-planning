@@ -15,15 +15,34 @@ agent = TripPlannerAgent()
 
 class PlanRequest(BaseModel):
     region: str
+    thread_id: str
+
+class FeedbackRequest(BaseModel):
+    thread_id: str
+    category: str
 
 @app.post("/api/plan")
 async def plan_trip(request: PlanRequest):
     """
-    Plan a trip for a given region.
+    Plan a trip for a given region. Use thread_id to track HIL state.
     """
     try:
-        print(f"Received request for region: {request.region}")
-        result = await agent.plan_trip(request.region)
+        print(f"Received request for region: {request.region}, thread_id: {request.thread_id}")
+        result = await agent.plan_trip(request.region, request.thread_id)
+        return result
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/feedback")
+async def provide_feedback(request: FeedbackRequest):
+    """
+    Provide feedback (preferred category) to continue the planning process.
+    """
+    try:
+        print(f"Received feedback for thread_id: {request.thread_id}, category: {request.category}")
+        result = await agent.provide_feedback(request.thread_id, request.category)
         return result
     except Exception as e:
         import traceback
