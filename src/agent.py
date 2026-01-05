@@ -2,8 +2,8 @@ from langgraph.graph import StateGraph, END
 import httpx
 from langchain_community.chat_models import ChatOllama
 from langchain_core.messages import HumanMessage, SystemMessage
-from models_v2 import TripState, ScheduleItem, Location, TravelInfo, TimeSettings, DateTheme
-from kakao_client_v2 import KakaoMapClient
+from models import TripState, ScheduleItem, Location, TravelInfo, TimeSettings, DateTheme
+from kakao_client import KakaoMapClient
 from time_calculator import TimeCalculator
 import os
 from dotenv import load_dotenv
