@@ -28,18 +28,18 @@ class KakaoMapClient:
         # 헤더 확인
         print(f"📋 Authorization Header: KakaoAK {self.api_key[:10]}...")
 
-    async def search_attractions(
+    async def find_activity_places(
             self,
-            region: str,
+            location_name: str,
             radius: int = 2000,
             size: int = 10
     ) -> List[Location]:
-        """놀거리 검색 (관광지, 명소 등)"""
+        """활동 장소 검색 (관광지, 명소, 박물관 등)"""
         keywords = [
-            f"{region} 관광지",
-            f"{region} 명소",
-            f"{region} 공원",
-            f"{region} 박물관"
+            f"{location_name} 관광지",
+            f"{location_name} 명소",
+            f"{location_name} 공원",
+            f"{location_name} 박물관"
         ]
 
         all_results = []
@@ -82,11 +82,11 @@ class KakaoMapClient:
 
         return unique_results[:size]
 
-    async def search_place(self, query: str) -> Optional[Location]:
+    async def find_specific_place(self, place_name: str) -> Optional[Location]:
         """특정 장소 하나 검색 (제일 정확도 높은 것)"""
         async with httpx.AsyncClient() as client:
             params = {
-                "query": query,
+                "query": place_name,
                 "size": 1,
                 "sort": "accuracy"
             }
@@ -97,10 +97,10 @@ class KakaoMapClient:
             )
             response.raise_for_status()
             data = response.json()
-            
+
             if not data.get("documents"):
                 return None
-                
+
             doc = data["documents"][0]
             return Location(
                 name=doc["place_name"],
@@ -113,7 +113,7 @@ class KakaoMapClient:
                 distance=int(doc.get("distance", 0)) if doc.get("distance") else None
             )
 
-    async def search_category(
+    async def search_by_category(
             self,
             category_code: str,
             x: float,
@@ -157,7 +157,7 @@ class KakaoMapClient:
 
             return results
 
-    async def search_keyword_nearby(
+    async def search_nearby_by_keyword(
             self,
             keyword: str,
             x: float,
@@ -165,7 +165,7 @@ class KakaoMapClient:
             radius: int = 500,
             size: int = 5
     ) -> List[Location]:
-        """좌표 주변 키워드 검색 (술집 등)"""
+        """좌표 주변 키워드 검색"""
         async with httpx.AsyncClient() as client:
             params = {
                 "query": keyword,
@@ -200,12 +200,12 @@ class KakaoMapClient:
 
             return results
 
-    async def search_restaurants_nearby(
+    async def find_dining_places(
             self,
             x: float,
             y: float,
             radius: int = 500,
             size: int = 5
     ) -> List[Location]:
-        """특정 좌표 주변 음식점 검색 (Wrapper)"""
-        return await self.search_category("FD6", x, y, radius, size)
+        """특정 좌표 주변 음식점 검색"""
+        return await self.search_by_category("FD6", x, y, radius, size)
