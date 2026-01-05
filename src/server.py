@@ -6,8 +6,8 @@ import os
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from agent_v2 import TripPlannerAgent
-from models_v2 import TimeSettings, DateTheme
+from agent import TripPlannerAgent
+from models import TimeSettings, DateTheme
 
 app = FastAPI(
     title="Seoul Trip Planner API v2",
