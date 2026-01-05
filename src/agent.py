@@ -46,13 +46,14 @@ class TripPlannerAgent:
         # 엣지 정의
         workflow.set_entry_point("analyze_user_input")
 
-        # 조건부 엣지
+        # 조건부 엣지: 입력 타입과 테마 설정에 따라 분기
         workflow.add_conditional_edges(
             "analyze_user_input",
-            self.route_by_input_type,
+            self.route_after_analysis,
             {
-                "region": "request_activity_preference",
-                "specific_place": "request_food_preference"
+                "ask_activity": "request_activity_preference",
+                "skip_to_activity": "discover_activity_places",
+                "skip_to_food": "request_food_preference"
             }
         )
 
@@ -83,9 +84,25 @@ class TripPlannerAgent:
             interrupt_after=["request_activity_preference", "request_food_preference", "request_refinement_feedback"]
         )
 
-    def route_by_input_type(self, state: TripState) -> str:
-        """입력 타입에 따른 경로 분기"""
-        return state.get("input_type", "region")
+    def route_after_analysis(self, state: TripState) -> str:
+        """입력 분석 후 라우팅 (테마 설정 고려)"""
+        input_type = state.get("input_type", "region")
+        date_theme = state.get("date_theme")
+
+        # 테마가 설정되어 있으면 HIL 건너뛰기
+        if date_theme and date_theme.theme:
+            if input_type == "region":
+                # 지역 + 테마 있음 -> 바로 활동 장소 검색
+                return "skip_to_activity"
+            else:
+                # 특정 장소 + 테마 있음 -> 음식 선호도만 물어보기
+                return "skip_to_food"
+        else:
+            # 테마 없음 -> 기존 HIL 플로우
+            if input_type == "region":
+                return "ask_activity"
+            else:
+                return "skip_to_food"
 
     async def analyze_user_input(self, state: TripState) -> TripState:
         """사용자 입력 분석"""
@@ -156,13 +173,21 @@ VALUE: [정제된 지역명 또는 장소명]
         location = state["parsed_location"]
         radius = state.get("search_radius", 2000)
 
-        # 🎨 테마 설정 활용
+        # 🎨 테마 설정 우선 활용
         date_theme = state.get("date_theme")
         theme = date_theme.theme if date_theme else None
 
+        # HIL로 받은 선호도는 테마가 없을 때만 사용
         preference = state.get("user_activity_preference")
 
-        if preference:
+        if theme:
+            # 테마가 있으면 테마 기반 검색 (평점 필터링 포함)
+            state["progress_messages"].append(f"✓ '{theme}' 테마로 활동 장소를 검색합니다.")
+            places = await self.kakao_client.find_activity_places(location, theme, radius)
+            state["activity_places"] = places
+
+        elif preference:
+            # 테마 없고 HIL 선호도가 있으면 키워드 확장 검색
             state["progress_messages"].append(f"✓ '{preference}' 테마로 활동 장소를 검색합니다.")
 
             # 키워드 확장
@@ -219,8 +244,8 @@ VALUE: [정제된 지역명 또는 장소명]
             state["activity_places"] = unique_places[:5]
 
         else:
-            # ⭐ 테마 기반 검색 (평점 필터링 포함)
-            places = await self.kakao_client.find_activity_places(location, theme, radius)
+            # 테마도 없고 선호도도 없으면 기본 검색
+            places = await self.kakao_client.find_activity_places(location, None, radius)
             state["activity_places"] = places
 
         state["progress_messages"].append(f"✓ 활동 장소 {len(state['activity_places'])}개 발견 (평점 기반 필터링 적용)")
