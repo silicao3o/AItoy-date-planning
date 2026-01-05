@@ -1,7 +1,7 @@
 import asyncio
 import uuid
-from agent_v2 import TripPlannerAgent
-from models_v2 import TimeSettings, DateTheme
+from agent import TripPlannerAgent
+from models import TimeSettings, DateTheme
 
 
 async def main():
