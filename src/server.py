@@ -20,7 +20,7 @@ agent = TripPlannerAgent()
 
 class TripPlanRequest(BaseModel):
     """여행 계획 요청"""
-    location: str = Field(..., description="방문 장소 (예: 홍대, 롯데월드)")
+    user_input: str = Field(..., description="사용자 입력 (자연어)")
     session_id: str = Field(..., description="세션 ID")
 
     # 프론트엔드에서 설정한 옵션들
@@ -30,7 +30,7 @@ class TripPlanRequest(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "location": "홍대",
+                "user_input": "홍대에서 보드게임하고 한식 먹을래",
                 "session_id": "user123",
                 "time_settings": {
                     "enabled": True,
@@ -63,7 +63,7 @@ async def create_trip_plan(request: TripPlanRequest):
     - 🎭 **분위기 설정**: 캐주얼/로맨틱/활기찬 분위기에 맞는 장소 추천
 
     ## Request Body
-    - **location**: 방문 지역/장소
+    - **user_input**: 방문 지역 및 활동/식사 요구사항 (자연어)
     - **session_id**: 세션 ID
     - **time_settings**: (선택)
         - enabled: 시간 설정 사용 여부
@@ -82,13 +82,13 @@ async def create_trip_plan(request: TripPlanRequest):
     """
     try:
         print(f"[API] 여행 계획 요청 v2")
-        print(f"  - 위치: {request.location}")
+        print(f"  - 입력: {request.user_input}")
         print(f"  - 세션: {request.session_id}")
         print(f"  - 시간 설정: {request.time_settings.enabled if request.time_settings else False}")
         print(f"  - 테마: {request.date_theme.theme if request.date_theme else 'None'}")
 
         result = await agent.plan_trip(
-            user_input=request.location,
+            user_input=request.user_input,
             session_id=request.session_id,
             time_settings=request.time_settings,
             date_theme=request.date_theme
