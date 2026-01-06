@@ -94,9 +94,13 @@ python test_hil_place.py
 ```
 .
 ├── src/
-│   ├── agent.py        # LangGraph 에이전트 워크플로우 정의
-│   ├── kaako_client.py # 카카오맵 API 클라이언트
-│   ├── models.py       # 데이터 모델 (Pydantic, TypedDict)
+│   ├── agent.py        # 에이전트 오케스트레이션 및 초기화
+│   ├── graph.py        # LangGraph 워크플로우 구성 (Graph, Edges)
+│   ├── nodes.py        # 워크플로우(Graph)의 각 노드 로직
+│   ├── state.py        # 에이전트 상태 정의 (TripState)
+│   ├── models.py       # 데이터 모델 (Pydantic: Location, ScheduleItem 등)
+│   ├── kakao_client.py # 카카오맵 API 클라이언트
+│   ├── time_calculator.py # 시간/거리 계산 유틸리티
 │   ├── server.py       # FastAPI 서버 진입점
 │   └── main.py         # (Optional) CLI 실행용
 ├── test_hil.py         # HIL 테스트 스크립트
