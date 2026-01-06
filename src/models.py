@@ -57,16 +57,20 @@ class UserIntent(BaseModel):
     """자연어 분석 결과"""
     location: str  # 지역명 (예: "홍대", "강남")
     
-    # 각 카테고리별 요구사항
-    activity_required: bool = True  # 활동 장소 필요 여부
-    activity_preference: Optional[str] = None  # 활동 선호도 (예: "보드게임카페", "방탈출")
+    # 각 카테고리별 요구사항 및 구체적 키워드(분위기 등)
+    activity_required: bool = True
+    activity_preference: Optional[str] = None
+    activity_keywords: List[str] = Field(default_factory=list)  # 예: ["활동적인", "이색적인"]
     
-    dining_required: bool = True  # 식사 장소 필요 여부
-    food_preference: Optional[str] = None  # 음식 선호도 (예: "한식", "양식")
+    dining_required: bool = True
+    food_preference: Optional[str] = None
+    food_keywords: List[str] = Field(default_factory=list)  # 예: ["가성비", "노포"]
     
-    cafe_required: bool = True  # 카페 필요 여부
-    cafe_preference: Optional[str] = None  # 카페 선호도
+    cafe_required: bool = True
+    cafe_preference: Optional[str] = None
+    cafe_keywords: List[str] = Field(default_factory=list)  # 예: ["조용한", "뷰좋은"]
     
-    drinking_required: bool = True  # 술집 필요 여부
-    drinking_preference: Optional[str] = None  # 술집 선호도
+    drinking_required: bool = True
+    drinking_preference: Optional[str] = None
+    drinking_keywords: List[str] = Field(default_factory=list)  # 예: ["시끄러운", "헌팅"]
 

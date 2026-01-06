@@ -27,13 +27,19 @@ class TripNodes:
             if user_intent and (not user_intent.dining_required or user_intent.food_preference):
                 return "skip_to_dining"
             return "skip_to_food"
+            
+        # 1.5 활동이 필요 없는 경우 -> 바로 식당/카페 검색으로
+        if user_intent and not user_intent.activity_required:
+            if not user_intent.dining_required or user_intent.food_preference:
+                return "skip_to_dining"
+            return "skip_to_food"
 
         # 2. 테마가 설정되어 있는 경우 -> HIL 건너뛰기
         if date_theme and date_theme.theme:
             return "skip_to_activity"
 
-        # 3. 자연어 분석 결과에 활동 선호도가 이미 있는 경우 -> HIL 건너뛰기
-        if user_intent and user_intent.activity_preference:
+        # 3. 자연어 분석 결과에 활동 선호도나 키워드가 있는 경우 -> HIL 건너뛰기
+        if user_intent and (user_intent.activity_preference or user_intent.activity_keywords):
             return "skip_to_activity"
 
         # 4. 아무것도 없다면 -> HIL 활동 선호도 질문
@@ -51,120 +57,113 @@ class TripNodes:
         return "ask_food"
 
     async def analyze_user_input(self, state: TripState) -> TripState:
-        """사용자 입력 분석 (자연어 처리 강화)"""
+        """사용자 입력 분석 (JSON 기반 구조화)"""
         print(f"[DEBUG] Analyzing input: {state['user_input']}")
         
-        # 자연어 분석 프롬프트
+        # 테마 정보가 있다면 함께 제공하여 LLM이 판단하게 함
+        date_theme = state.get("date_theme")
+        theme_info = f"선택된 테마: {date_theme.theme}, 분위기: {date_theme.atmosphere}" if date_theme else "선택된 테마 없음"
+
+        # 자연어 분석 프롬프트 (JSON 출력 유도)
+        system_prompt = f"""
+        당신은 여행 계획 전문가입니다. 사용자의 자연어 입력과 선택된 테마 정보를 종합하여 구조화된 JSON 데이터로 변환하세요.
+
+        [입력 정보]
+        사용자 발화: {state['user_input']}
+        {theme_info}
+
+        [지시 사항]
+        1. 사용자의 발화가 가장 우선입니다.
+        2. 발화에 없는 내용은 '선택된 테마' 정보를 참고하여 키워드를 채우세요.
+        3. 테마도 없고 발화도 없으면 일반적인 좋은 곳을 추천하기 위해 required=true로 설정하세요.
+        4. "필요 없어", "안 갈래" 등의 부정 표현이 있으면 required=false로 설정하세요.
+
+        [JSON 응답 형식]
+        {{
+            "location": "지역명 또는 장소명",
+            "activity": {{
+                "required": true/false,
+                "preference": "구체적 활동 (예: 보드게임, 방탈출) 또는 null",
+                "keywords": ["키워드1", "키워드2"]
+            }},
+            "dining": {{
+                "required": true/false,
+                "preference": "음식 종류 (예: 한식, 파스타) 또는 null",
+                "keywords": ["키워드1", "키워드2"]
+            }},
+            "cafe": {{
+                "required": true/false,
+                "preference": "선호도 또는 null",
+                "keywords": ["키워드1", "키워드2"]
+            }},
+            "drinking": {{
+                "required": true/false,
+                "preference": "술집 종류 (예: 이자카야, 칵테일바) 또는 null",
+                "keywords": ["키워드1", "키워드2"]
+            }}
+        }}
+        """
+
         messages = [
-            SystemMessage(content="""
-            당신은 여행 계획 전문가입니다. 사용자의 자연어 입력을 분석하여 다음 정보를 추출하세요:
-            
-            1. 지역명 (예: "홍대", "강남", "신촌")
-            2. 활동 장소 필요 여부 및 선호도 (예: "보드게임카페", "방탈출", "전시" 등)
-            3. 식사 장소 필요 여부 및 음식 선호도 (예: "한식", "양식", "일식" 등)
-            4. 카페 필요 여부 및 선호도
-            5. 술집 필요 여부 및 선호도
-            
-            **중요**: 
-            - 사용자가 명시적으로 "필요없다", "안 갈거야", "제외" 등의 표현을 사용하면 해당 항목은 required=false
-            - 언급이 없으면 기본값으로 required=true
-            - 구체적인 선호도가 있으면 preference에 기록
-            
-            응답 형식 (각 줄은 정확히 이 형식을 따라야 함):
-            LOCATION: [지역명]
-            ACTIVITY_REQUIRED: [true|false]
-            ACTIVITY_PREFERENCE: [선호도 또는 none]
-            DINING_REQUIRED: [true|false]
-            FOOD_PREFERENCE: [음식 종류 또는 none]
-            CAFE_REQUIRED: [true|false]
-            CAFE_PREFERENCE: [선호도 또는 none]
-            DRINKING_REQUIRED: [true|false]
-            DRINKING_PREFERENCE: [선호도 또는 none]
-            
-            예시 1: "홍대에서 보드게임카페 가고 한식 먹고 싶어"
-            LOCATION: 홍대
-            ACTIVITY_REQUIRED: true
-            ACTIVITY_PREFERENCE: 보드게임카페
-            DINING_REQUIRED: true
-            FOOD_PREFERENCE: 한식
-            CAFE_REQUIRED: true
-            CAFE_PREFERENCE: none
-            DRINKING_REQUIRED: true
-            DRINKING_PREFERENCE: none
-            
-            예시 2: "강남에서 전시 보고 술은 안 마실거야"
-            LOCATION: 강남
-            ACTIVITY_REQUIRED: true
-            ACTIVITY_PREFERENCE: 전시
-            DINING_REQUIRED: true
-            FOOD_PREFERENCE: none
-            CAFE_REQUIRED: true
-            CAFE_PREFERENCE: none
-            DRINKING_REQUIRED: false
-            DRINKING_PREFERENCE: none
-            """),
-            HumanMessage(content=f"입력: {state['user_input']}")
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=state['user_input'])
         ]
 
-        response = await self.llm.ainvoke(messages)
-        content = response.content.strip()
-        
-        # 파싱 결과 저장
-        from models import UserIntent
-        
-        intent_data = {
-            "location": "",
-            "activity_required": True,
-            "activity_preference": None,
-            "dining_required": True,
-            "food_preference": None,
-            "cafe_required": True,
-            "cafe_preference": None,
-            "drinking_required": True,
-            "drinking_preference": None
-        }
-        
-        # LLM 응답 파싱
-        lines = content.split('\n')
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
+        try:
+            response = await self.llm.ainvoke(messages)
+            content = response.content.strip()
             
-            if line.upper().startswith("LOCATION:"):
-                intent_data["location"] = line.split(":", 1)[1].strip()
-            elif line.upper().startswith("ACTIVITY_REQUIRED:"):
-                value = line.split(":", 1)[1].strip().lower()
-                intent_data["activity_required"] = value == "true"
-            elif line.upper().startswith("ACTIVITY_PREFERENCE:"):
-                value = line.split(":", 1)[1].strip()
-                intent_data["activity_preference"] = None if value.lower() == "none" else value
-            elif line.upper().startswith("DINING_REQUIRED:"):
-                value = line.split(":", 1)[1].strip().lower()
-                intent_data["dining_required"] = value == "true"
-            elif line.upper().startswith("FOOD_PREFERENCE:"):
-                value = line.split(":", 1)[1].strip()
-                intent_data["food_preference"] = None if value.lower() == "none" else value
-            elif line.upper().startswith("CAFE_REQUIRED:"):
-                value = line.split(":", 1)[1].strip().lower()
-                intent_data["cafe_required"] = value == "true"
-            elif line.upper().startswith("CAFE_PREFERENCE:"):
-                value = line.split(":", 1)[1].strip()
-                intent_data["cafe_preference"] = None if value.lower() == "none" else value
-            elif line.upper().startswith("DRINKING_REQUIRED:"):
-                value = line.split(":", 1)[1].strip().lower()
-                intent_data["drinking_required"] = value == "true"
-            elif line.upper().startswith("DRINKING_PREFERENCE:"):
-                value = line.split(":", 1)[1].strip()
-                intent_data["drinking_preference"] = None if value.lower() == "none" else value
-        
-        # UserIntent 객체 생성
-        user_intent = UserIntent(**intent_data)
+            # 마크다운 코드 블록 제거 (혹시 있을 경우)
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+
+            import json
+            data = json.loads(content)
+            
+            # 파싱 결과 저장
+            from models import UserIntent
+            
+            intent_data = {
+                "location": data.get("location", ""),
+                
+                "activity_required": data["activity"].get("required", True),
+                "activity_preference": data["activity"].get("preference"),
+                "activity_keywords": data["activity"].get("keywords", []),
+                
+                "dining_required": data["dining"].get("required", True),
+                "food_preference": data["dining"].get("preference"),
+                "food_keywords": data["dining"].get("keywords", []),
+                
+                "cafe_required": data["cafe"].get("required", True),
+                "cafe_preference": data["cafe"].get("preference"),
+                "cafe_keywords": data["cafe"].get("keywords", []),
+                
+                "drinking_required": data["drinking"].get("required", True),
+                "drinking_preference": data["drinking"].get("preference"),
+                "drinking_keywords": data["drinking"].get("keywords", [])
+            }
+            
+            user_intent = UserIntent(**intent_data)
+            
+        except Exception as e:
+            print(f"[ERROR] Intent Parsing Failed: {e}")
+            # 실패 시 기본값 (안전장치)
+            from models import UserIntent
+            user_intent = UserIntent(
+                location=state['user_input'][:10], # 대충 앞부분만 사용
+                activity_required=True,
+                dining_required=True,
+                cafe_required=True,
+                drinking_required=True
+            )
+
         state["user_intent"] = user_intent
         state["parsed_location"] = user_intent.location
-        state["input_type"] = "region"  # 자연어 입력은 기본적으로 지역 검색
+        state["input_type"] = "region"  
         
-        # 선호도를 state에도 저장 (기존 로직 호환성)
+        # 선호도를 state에도 저장 (기존 로직 호환성 및 HIL 체크용)
         if user_intent.activity_preference:
             state["user_activity_preference"] = user_intent.activity_preference
         if user_intent.food_preference:
@@ -172,14 +171,17 @@ class TripNodes:
         
         # 진행 메시지
         state["progress_messages"].append(f"✓ 입력 분석 완료: {user_intent.location}")
-        if user_intent.activity_preference:
-            state["progress_messages"].append(f"  - 활동: {user_intent.activity_preference}")
-        if user_intent.food_preference:
-            state["progress_messages"].append(f"  - 음식: {user_intent.food_preference}")
-        if not user_intent.cafe_required:
-            state["progress_messages"].append(f"  - 카페: 제외")
-        if not user_intent.drinking_required:
-            state["progress_messages"].append(f"  - 술집: 제외")
+        
+        def format_req(name, req, pref, keywords):
+            if not req: return f"  - {name}: 제외"
+            desc = pref if pref else "추천"
+            if keywords: desc += f" ({', '.join(keywords)})"
+            return f"  - {name}: {desc}"
+
+        state["progress_messages"].append(format_req("활동", user_intent.activity_required, user_intent.activity_preference, user_intent.activity_keywords))
+        state["progress_messages"].append(format_req("식사", user_intent.dining_required, user_intent.food_preference, user_intent.food_keywords))
+        state["progress_messages"].append(format_req("카페", user_intent.cafe_required, user_intent.cafe_preference, user_intent.cafe_keywords))
+        state["progress_messages"].append(format_req("술집", user_intent.drinking_required, user_intent.drinking_preference, user_intent.drinking_keywords))
         
         return state
 
@@ -317,9 +319,30 @@ class TripNodes:
         atmosphere = date_theme.atmosphere if date_theme else "casual"
 
         all_dining = []
+        
+        # 사용자 인텐트 키워드 체크
+        intent_keywords = user_intent.food_keywords if user_intent else []
+        food_pref = state.get("user_food_preference")
+
         for loc in current_locations:
-            if state.get("user_food_preference") and state["user_food_preference"] != "상관없음":
-                keyword = f"{state['user_food_preference']} 맛집"
+            if food_pref and food_pref != "상관없음":
+                # 선호도 + 키워드 조합 (예: "한식 노포 맛집")
+                keyword_parts = [food_pref] + intent_keywords + ["맛집"]
+                keyword = " ".join(keyword_parts)
+                
+                state["progress_messages"].append(f"✓ '{keyword}' 검색")
+                
+                places = await self.kakao_client.search_nearby_by_keyword(
+                    keyword=keyword,
+                    x=loc.x,
+                    y=loc.y,
+                    radius=500,
+                    size=3
+                )
+            elif intent_keywords:
+                 # 선호도는 없지만 분위기 키워드는 있는 경우 (예: "조용한 맛집")
+                keyword = " ".join(intent_keywords + ["맛집"])
+                state["progress_messages"].append(f"✓ '{keyword}' 검색 (NLP 기반)")
                 places = await self.kakao_client.search_nearby_by_keyword(
                     keyword=keyword,
                     x=loc.x,
@@ -328,7 +351,7 @@ class TripNodes:
                     size=3
                 )
             else:
-                # ⭐ 분위기 반영 + 평점 필터링
+                # ⭐ 기존 로직: 분위기 설정 활용
                 places = await self.kakao_client.find_dining_places(
                     x=loc.x,
                     y=loc.y,
@@ -347,7 +370,7 @@ class TripNodes:
                 unique_dining.append(r)
 
         state["dining_places"] = unique_dining[:5]
-        state["progress_messages"].append(f"✓ 식사 장소 {len(unique_dining)}개 발견 (분위기 기반)")
+        state["progress_messages"].append(f"✓ 식사 장소 {len(unique_dining)}개 발견")
 
         return state
 
@@ -372,14 +395,27 @@ class TripNodes:
         all_cafes = []
 
         for place in target_places:
-            # ⭐ 분위기 반영 + 평점 필터링
-            cafes = await self.kakao_client.find_cafe_places(
-                x=place.x,
-                y=place.y,
-                atmosphere=atmosphere,
-                radius=300,
-                size=2
-            )
+            # NLP 키워드 우선 (예: "조용한 카페")
+            intent_keywords = user_intent.cafe_keywords if user_intent else []
+            
+            if intent_keywords:
+                keyword = " ".join(intent_keywords + ["카페"])
+                cafes = await self.kakao_client.search_nearby_by_keyword(
+                    keyword=keyword,
+                    x=place.x,
+                    y=place.y,
+                    radius=300,
+                    size=2
+                )
+            else:
+                # ⭐ 기존 로직: 분위기 반영
+                cafes = await self.kakao_client.find_cafe_places(
+                    x=place.x,
+                    y=place.y,
+                    atmosphere=atmosphere,
+                    radius=300,
+                    size=2
+                )
             all_cafes.extend(cafes)
 
         seen = set()
@@ -414,9 +450,16 @@ class TripNodes:
 
         all_bars = []
         for target in targets:
-            # ⭐ 평점 필터링 적용
+            # NLP 키워드 우선 (예: "칵테일바", "루프탑")
+            intent_keywords = user_intent.drinking_keywords if user_intent else []
+            preference = user_intent.drinking_preference if user_intent else "술집"
+            if not preference or preference == "none": preference = "술집"
+
+            keyword_parts = [preference] + intent_keywords
+            keyword = " ".join(keyword_parts)
+            
             bars = await self.kakao_client.search_nearby_by_keyword(
-                keyword="술집",
+                keyword=keyword,
                 x=target.x,
                 y=target.y,
                 radius=300,
