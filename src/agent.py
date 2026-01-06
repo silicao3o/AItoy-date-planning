@@ -60,7 +60,8 @@ class TripPlannerAgent:
                 "user_feedback": None,
                 "next_action": None,
                 "time_settings": time_settings,
-                "date_theme": date_theme
+                "date_theme": date_theme,
+                "user_intent": None
             }
             await self.graph.ainvoke(initial_state, config)
 

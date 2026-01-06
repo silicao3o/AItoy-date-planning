@@ -67,7 +67,7 @@ class KakaoMapClient:
                 "category_code": "AT4"  # 관광명소
             },
             "activity": {
-                "keywords": [f"{location_name} 방탈출", f"{location_name} 체험", f"{location_name} 액티비티"],
+                "keywords": [f"{location_name} 방탈출", f"{location_name} 체험", f"{location_name} 액티비티", f"{location_name} 보드게임카페"],
                 "category_code": None
             },
             "foodie": {

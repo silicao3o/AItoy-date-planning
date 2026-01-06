@@ -29,12 +29,23 @@ def build_trip_graph(nodes: TripNodes, memory: MemorySaver) -> StateGraph:
         {
             "ask_activity": "request_activity_preference",
             "skip_to_activity": "discover_activity_places",
-            "skip_to_food": "request_food_preference"
+            "skip_to_food": "request_food_preference",
+            "skip_to_dining": "discover_dining_places"
         }
     )
 
     workflow.add_edge("request_activity_preference", "discover_activity_places")
-    workflow.add_edge("discover_activity_places", "request_food_preference")
+
+    # 활동 검색 후 라우팅 (음식 선호도에 따라 HIL 분기)
+    workflow.add_conditional_edges(
+        "discover_activity_places",
+        nodes.route_after_activity,
+        {
+            "ask_food": "request_food_preference",
+            "skip_to_dining": "discover_dining_places"
+        }
+    )
+
     workflow.add_edge("request_food_preference", "discover_dining_places")
     workflow.add_edge("discover_dining_places", "discover_cafe_places")
     workflow.add_edge("discover_cafe_places", "discover_drinking_places")

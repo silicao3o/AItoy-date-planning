@@ -1,5 +1,5 @@
 from typing import TypedDict, List, Optional
-from models import Location, ScheduleItem, TimeSettings, DateTheme
+from models import Location, ScheduleItem, TimeSettings, DateTheme, UserIntent
 
 class TripState(TypedDict):
     """여행 계획 상태"""
@@ -21,6 +21,7 @@ class TripState(TypedDict):
     # 사용자 설정 (프론트에서 받음)
     time_settings: Optional[TimeSettings]  # 시간 설정
     date_theme: Optional[DateTheme]  # 데이트 테마
+    user_intent: Optional['UserIntent']  # 자연어 분석 결과 (새로 추가)
 
     # 상태 관리
     progress_messages: List[str]  # 진행 상황 메시지

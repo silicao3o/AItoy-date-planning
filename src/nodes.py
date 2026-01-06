@@ -16,75 +16,171 @@ class TripNodes:
         self.time_calc = time_calc
 
     def route_after_analysis(self, state: TripState) -> str:
-        """입력 분석 후 라우팅 (테마 설정 고려)"""
+        """입력 분석 후 라우팅 (테마 및 자연어 분석 결과 고려)"""
         input_type = state.get("input_type", "region")
+        user_intent = state.get("user_intent")
         date_theme = state.get("date_theme")
 
-        # 테마가 설정되어 있으면 HIL 건너뛰기
+        # 1. 특정 장소 검색인 경우 -> 활동 검색 건너뜀
+        if input_type == "specific_place":
+            # 음식 취향도 이미 알거나 필요 없다면 바로 식당 검색으로
+            if user_intent and (not user_intent.dining_required or user_intent.food_preference):
+                return "skip_to_dining"
+            return "skip_to_food"
+
+        # 2. 테마가 설정되어 있는 경우 -> HIL 건너뛰기
         if date_theme and date_theme.theme:
-            if input_type == "region":
-                # 지역 + 테마 있음 -> 바로 활동 장소 검색
-                return "skip_to_activity"
-            else:
-                # 특정 장소 + 테마 있음 -> 음식 선호도만 물어보기
-                return "skip_to_food"
-        else:
-            # 테마 없음 -> 기존 HIL 플로우
-            if input_type == "region":
-                return "ask_activity"
-            else:
-                return "skip_to_food"
+            return "skip_to_activity"
+
+        # 3. 자연어 분석 결과에 활동 선호도가 이미 있는 경우 -> HIL 건너뛰기
+        if user_intent and user_intent.activity_preference:
+            return "skip_to_activity"
+
+        # 4. 아무것도 없다면 -> HIL 활동 선호도 질문
+        return "ask_activity"
+
+    def route_after_activity(self, state: TripState) -> str:
+        """활동 검색 후 라우팅 (음식 선호도 고려)"""
+        user_intent = state.get("user_intent")
+
+        # 자연어 분석 결과에 식사 선호도가 이미 있거나, 식사 검색이 필요 없는 경우 -> HIL 건너뛰기
+        if user_intent:
+            if not user_intent.dining_required or user_intent.food_preference:
+                return "skip_to_dining"
+
+        return "ask_food"
 
     async def analyze_user_input(self, state: TripState) -> TripState:
-        """사용자 입력 분석"""
+        """사용자 입력 분석 (자연어 처리 강화)"""
         print(f"[DEBUG] Analyzing input: {state['user_input']}")
+        
+        # 자연어 분석 프롬프트
         messages = [
             SystemMessage(content="""
-            당신은 여행 전문가입니다. 사용자의 입력이 '넓은 지역명(동/구/시)'인지 '특정 장소(건물/가게/명소)'인지 판단하세요.
-            - "홍대", "강남", "부산", "명동" -> region
-            - "롯데월드", "서울타워", "리움미술관" -> specific_place
-
-            응답 형식:
-            TYPE: [region|specific_place]
-            VALUE: [정제된 지역명 또는 장소명]
+            당신은 여행 계획 전문가입니다. 사용자의 자연어 입력을 분석하여 다음 정보를 추출하세요:
+            
+            1. 지역명 (예: "홍대", "강남", "신촌")
+            2. 활동 장소 필요 여부 및 선호도 (예: "보드게임카페", "방탈출", "전시" 등)
+            3. 식사 장소 필요 여부 및 음식 선호도 (예: "한식", "양식", "일식" 등)
+            4. 카페 필요 여부 및 선호도
+            5. 술집 필요 여부 및 선호도
+            
+            **중요**: 
+            - 사용자가 명시적으로 "필요없다", "안 갈거야", "제외" 등의 표현을 사용하면 해당 항목은 required=false
+            - 언급이 없으면 기본값으로 required=true
+            - 구체적인 선호도가 있으면 preference에 기록
+            
+            응답 형식 (각 줄은 정확히 이 형식을 따라야 함):
+            LOCATION: [지역명]
+            ACTIVITY_REQUIRED: [true|false]
+            ACTIVITY_PREFERENCE: [선호도 또는 none]
+            DINING_REQUIRED: [true|false]
+            FOOD_PREFERENCE: [음식 종류 또는 none]
+            CAFE_REQUIRED: [true|false]
+            CAFE_PREFERENCE: [선호도 또는 none]
+            DRINKING_REQUIRED: [true|false]
+            DRINKING_PREFERENCE: [선호도 또는 none]
+            
+            예시 1: "홍대에서 보드게임카페 가고 한식 먹고 싶어"
+            LOCATION: 홍대
+            ACTIVITY_REQUIRED: true
+            ACTIVITY_PREFERENCE: 보드게임카페
+            DINING_REQUIRED: true
+            FOOD_PREFERENCE: 한식
+            CAFE_REQUIRED: true
+            CAFE_PREFERENCE: none
+            DRINKING_REQUIRED: true
+            DRINKING_PREFERENCE: none
+            
+            예시 2: "강남에서 전시 보고 술은 안 마실거야"
+            LOCATION: 강남
+            ACTIVITY_REQUIRED: true
+            ACTIVITY_PREFERENCE: 전시
+            DINING_REQUIRED: true
+            FOOD_PREFERENCE: none
+            CAFE_REQUIRED: true
+            CAFE_PREFERENCE: none
+            DRINKING_REQUIRED: false
+            DRINKING_PREFERENCE: none
             """),
             HumanMessage(content=f"입력: {state['user_input']}")
         ]
 
         response = await self.llm.ainvoke(messages)
         content = response.content.strip()
-
-        input_type = "region"
-        parsed_value = state['user_input']
-
+        
+        # 파싱 결과 저장
+        from models import UserIntent
+        
+        intent_data = {
+            "location": "",
+            "activity_required": True,
+            "activity_preference": None,
+            "dining_required": True,
+            "food_preference": None,
+            "cafe_required": True,
+            "cafe_preference": None,
+            "drinking_required": True,
+            "drinking_preference": None
+        }
+        
+        # LLM 응답 파싱
         lines = content.split('\n')
         for line in lines:
             line = line.strip()
-            if not line: continue
-
-            if line.upper().startswith("TYPE:"):
-                input_type = line.split(":", 1)[1].strip().lower()
-                if "specific" in input_type:
-                    input_type = "specific_place"
-                elif "region" in input_type:
-                    input_type = "region"
-            elif line.upper().startswith("VALUE:"):
-                parsed_value = line.split(":", 1)[1].strip()
-
-        state["input_type"] = input_type
-        state["parsed_location"] = parsed_value
-        state["progress_messages"].append(f"✓ 입력 분석 완료: {parsed_value} ({input_type})")
-
-        # 특정 장소일 경우 좌표 미리 확보
-        if input_type == "specific_place":
-            place_location = await self.kakao_client.find_specific_place(parsed_value)
-            if place_location:
-                state["starting_point"] = place_location
-                state["progress_messages"].append(f"✓ 시작 지점 확인: {place_location.name}")
-            else:
-                state["input_type"] = "region"
-                state["progress_messages"].append(f"! 장소 검색 실패, 지역 검색으로 전환")
-
+            if not line:
+                continue
+            
+            if line.upper().startswith("LOCATION:"):
+                intent_data["location"] = line.split(":", 1)[1].strip()
+            elif line.upper().startswith("ACTIVITY_REQUIRED:"):
+                value = line.split(":", 1)[1].strip().lower()
+                intent_data["activity_required"] = value == "true"
+            elif line.upper().startswith("ACTIVITY_PREFERENCE:"):
+                value = line.split(":", 1)[1].strip()
+                intent_data["activity_preference"] = None if value.lower() == "none" else value
+            elif line.upper().startswith("DINING_REQUIRED:"):
+                value = line.split(":", 1)[1].strip().lower()
+                intent_data["dining_required"] = value == "true"
+            elif line.upper().startswith("FOOD_PREFERENCE:"):
+                value = line.split(":", 1)[1].strip()
+                intent_data["food_preference"] = None if value.lower() == "none" else value
+            elif line.upper().startswith("CAFE_REQUIRED:"):
+                value = line.split(":", 1)[1].strip().lower()
+                intent_data["cafe_required"] = value == "true"
+            elif line.upper().startswith("CAFE_PREFERENCE:"):
+                value = line.split(":", 1)[1].strip()
+                intent_data["cafe_preference"] = None if value.lower() == "none" else value
+            elif line.upper().startswith("DRINKING_REQUIRED:"):
+                value = line.split(":", 1)[1].strip().lower()
+                intent_data["drinking_required"] = value == "true"
+            elif line.upper().startswith("DRINKING_PREFERENCE:"):
+                value = line.split(":", 1)[1].strip()
+                intent_data["drinking_preference"] = None if value.lower() == "none" else value
+        
+        # UserIntent 객체 생성
+        user_intent = UserIntent(**intent_data)
+        state["user_intent"] = user_intent
+        state["parsed_location"] = user_intent.location
+        state["input_type"] = "region"  # 자연어 입력은 기본적으로 지역 검색
+        
+        # 선호도를 state에도 저장 (기존 로직 호환성)
+        if user_intent.activity_preference:
+            state["user_activity_preference"] = user_intent.activity_preference
+        if user_intent.food_preference:
+            state["user_food_preference"] = user_intent.food_preference
+        
+        # 진행 메시지
+        state["progress_messages"].append(f"✓ 입력 분석 완료: {user_intent.location}")
+        if user_intent.activity_preference:
+            state["progress_messages"].append(f"  - 활동: {user_intent.activity_preference}")
+        if user_intent.food_preference:
+            state["progress_messages"].append(f"  - 음식: {user_intent.food_preference}")
+        if not user_intent.cafe_required:
+            state["progress_messages"].append(f"  - 카페: 제외")
+        if not user_intent.drinking_required:
+            state["progress_messages"].append(f"  - 술집: 제외")
+        
         return state
 
     async def request_activity_preference(self, state: TripState) -> TripState:
@@ -101,31 +197,32 @@ class TripNodes:
 
     async def discover_activity_places(self, state: TripState) -> TripState:
         """활동 장소 검색 (테마 반영)"""
+        # 자연어 분석 결과 확인
+        user_intent = state.get("user_intent")
+        if user_intent and not user_intent.activity_required:
+            state["activity_places"] = []
+            state["progress_messages"].append("✓ 활동 장소 검색 건너뛰기 (사용자 요청)")
+            return state
+        
         location = state["parsed_location"]
         radius = state.get("search_radius", 2000)
 
-        # 🎨 테마 설정 우선 활용
+        # 🎨 테마 설정 vs 사용자 선호도 경쟁
         date_theme = state.get("date_theme")
         theme = date_theme.theme if date_theme else None
 
-        # HIL로 받은 선호도는 테마가 없을 때만 사용
+        # 사용자 선호도 (NLP 또는 HIL)
         preference = state.get("user_activity_preference")
 
-        if theme:
-            # 테마가 있으면 테마 기반 검색 (평점 필터링 포함)
-            state["progress_messages"].append(f"✓ '{theme}' 테마로 활동 장소를 검색합니다.")
-            places = await self.kakao_client.find_activity_places(location, theme, radius)
-            state["activity_places"] = places
-
-        elif preference:
-            # 테마 없고 HIL 선호도가 있으면 키워드 확장 검색
-            state["progress_messages"].append(f"✓ '{preference}' 테마로 활동 장소를 검색합니다.")
+        # 1. 사용자 선호도가 명확하면 최우선 적용
+        if preference and preference not in ["상관없음", "없음"]:
+            state["progress_messages"].append(f"✓ '{preference}' 테마로 활동 장소를 검색합니다. (사용자 선호 우선)")
 
             # 키워드 확장
             expansion_prompt = f"""
-            '{location}' 지역에서 '{preference}'와(과) 관련된 장소를 찾으려고 합니다.
-            검색 키워드 3~4개를 제시해주세요.
-            형식: 키워드1, 키워드2, 키워드3
+            '{location}' 지역에서 '{preference}'와(과) 관련된 장소를 찾기 위한 검색 키워드 3개를 쉼표로 구분하여 나열하세요.
+            다른 설명 없이 오직 키워드만 반환하세요.
+            예시: {location} {preference}, {location} 추천, {location} 데이트
             """
 
             try:
@@ -133,10 +230,16 @@ class TripNodes:
                 expansion_res = await self.llm.ainvoke(expansion_msg)
                 content = expansion_res.content.strip()
                 keywords = [k.strip() for k in content.split(",") if k.strip()]
-                if not keywords:
-                    keywords = [f"{location} {preference}"]
             except Exception as e:
-                keywords = [f"{location} {preference}"]
+                print(f"[ERROR] Keyword expansion failed: {e}")
+                keywords = []
+
+            # 기본 키워드 추가 (LLM 실패 대비 및 정확도 보장)
+            default_keyword = f"{location} {preference}"
+            if default_keyword not in keywords:
+                keywords.insert(0, default_keyword)
+
+            print(f"[DEBUG] Expanded keywords for {preference}: {keywords}")
 
             activity_places = []
             async with httpx.AsyncClient() as client:
@@ -174,8 +277,14 @@ class TripNodes:
 
             state["activity_places"] = unique_places[:5]
 
+        # 2. 선호도가 없으면 테마 적용
+        elif theme:
+            state["progress_messages"].append(f"✓ '{theme}' 테마로 활동 장소를 검색합니다.")
+            places = await self.kakao_client.find_activity_places(location, theme, radius)
+            state["activity_places"] = places
+
+        # 3. 둘 다 없으면 기본 검색
         else:
-            # 테마도 없고 선호도도 없으면 기본 검색
             places = await self.kakao_client.find_activity_places(location, None, radius)
             state["activity_places"] = places
 
@@ -184,6 +293,13 @@ class TripNodes:
 
     async def discover_dining_places(self, state: TripState) -> TripState:
         """식사 장소 검색 (분위기 반영)"""
+        # 자연어 분석 결과 확인
+        user_intent = state.get("user_intent")
+        if user_intent and not user_intent.dining_required:
+            state["dining_places"] = []
+            state["progress_messages"].append("✓ 식사 장소 검색 건너뛰기 (사용자 요청)")
+            return state
+        
         current_locations = []
 
         if state["input_type"] == "specific_place" and state.get("starting_point"):
@@ -237,6 +353,13 @@ class TripNodes:
 
     async def discover_cafe_places(self, state: TripState) -> TripState:
         """카페 검색 (분위기 반영)"""
+        # 자연어 분석 결과 확인
+        user_intent = state.get("user_intent")
+        if user_intent and not user_intent.cafe_required:
+            state["cafe_places"] = []
+            state["progress_messages"].append("✓ 카페 검색 건너뛰기 (사용자 요청)")
+            return state
+        
         if not state["dining_places"]:
             state["cafe_places"] = []
             return state
@@ -272,6 +395,13 @@ class TripNodes:
 
     async def discover_drinking_places(self, state: TripState) -> TripState:
         """술집 검색"""
+        # 자연어 분석 결과 확인
+        user_intent = state.get("user_intent")
+        if user_intent and not user_intent.drinking_required:
+            state["drinking_places"] = []
+            state["progress_messages"].append("✓ 술집 검색 건너뛰기 (사용자 요청)")
+            return state
+        
         targets = []
         if state["cafe_places"]:
             targets = state["cafe_places"][:2]
@@ -311,19 +441,34 @@ class TripNodes:
 
         # 장소 수집
         if state["input_type"] == "specific_place" and state.get("starting_point"):
-            places.append(("activity", state["starting_point"]))
-
-        for place in state["activity_places"][:2]:
-            places.append(("activity", place))
-
-        for place in state["dining_places"][:2]:
-            places.append(("dining", place))
-
-        for place in state["cafe_places"][:1]:
-            places.append(("cafe", place))
-
-        for place in state["drinking_places"][:1]:
-            places.append(("drinking", place))
+            # 시작점이 고정된 경우
+            start_point = state["starting_point"]
+            places = []
+            places.append(("activity", start_point)) # 시작점은 무조건 포함
+            
+            # 나머지 경로 최적화 (시작점 제외하고 최적화)
+            # 여기서는 편의상 시작점이 activity라고 가정했지만, 실제로는 타입이 다를 수 있음.
+            # 하지만 user_input이 specific_place면 보통 그곳을 기점으로 함.
+            
+            optimized = self.time_calc.find_optimized_path(
+                start_point,
+                [], # activities (시작점이 엑티비티라면 제외) -> 로직상 분리 필요하지만 복잡도 줄이기 위해 공백
+                state["dining_places"],
+                state["cafe_places"],
+                state["drinking_places"]
+            )
+            places.extend(optimized)
+            
+        else:
+            # 지역 검색인 경우, 전체 최적화
+            # 시작점이 없으므로 첫 번째 장소가 기준이 됨 (find_optimized_path 내부 로직에 맡김 or None)
+            places = self.time_calc.find_optimized_path(
+                None,
+                state["activity_places"],
+                state["dining_places"],
+                state["cafe_places"],
+                state["drinking_places"]
+            )
 
         if not places:
             return state
