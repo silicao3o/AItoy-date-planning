@@ -12,8 +12,6 @@ class Location(BaseModel):
     phone: Optional[str] = None
     place_url: Optional[str] = None
     distance: Optional[int] = None
-    rating: Optional[float] = None  # 평점 (추가)
-    review_count: Optional[int] = None  # 리뷰 수 (추가)
 
 
 class TravelInfo(BaseModel):

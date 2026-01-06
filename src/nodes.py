@@ -179,7 +179,7 @@ class TripNodes:
             places = await self.kakao_client.find_activity_places(location, None, radius)
             state["activity_places"] = places
 
-        state["progress_messages"].append(f"✓ 활동 장소 {len(state['activity_places'])}개 발견 (평점 기반 필터링 적용)")
+        state["progress_messages"].append(f"✓ 활동 장소 {len(state['activity_places'])}개 발견")
         return state
 
     async def discover_dining_places(self, state: TripState) -> TripState:
@@ -231,7 +231,7 @@ class TripNodes:
                 unique_dining.append(r)
 
         state["dining_places"] = unique_dining[:5]
-        state["progress_messages"].append(f"✓ 식사 장소 {len(unique_dining)}개 발견 (평점/분위기 기반)")
+        state["progress_messages"].append(f"✓ 식사 장소 {len(unique_dining)}개 발견 (분위기 기반)")
 
         return state
 
@@ -267,7 +267,7 @@ class TripNodes:
                 unique_cafes.append(c)
 
         state["cafe_places"] = unique_cafes[:3]
-        state["progress_messages"].append(f"✓ 카페 {len(unique_cafes)}개 발견 (평점/분위기 기반)")
+        state["progress_messages"].append(f"✓ 카페 {len(unique_cafes)}개 발견 (분위기 기반)")
         return state
 
     async def discover_drinking_places(self, state: TripState) -> TripState:
@@ -302,7 +302,7 @@ class TripNodes:
                 unique_bars.append(b)
 
         state["drinking_places"] = unique_bars[:3]
-        state["progress_messages"].append(f"✓ 술집/바 {len(unique_bars)}개 발견 (평점 기반)")
+        state["progress_messages"].append(f"✓ 술집/바 {len(unique_bars)}개 발견")
         return state
 
     async def generate_itinerary(self, state: TripState) -> TripState:

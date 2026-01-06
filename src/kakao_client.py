@@ -36,49 +36,8 @@ class KakaoMapClient:
             y=float(doc["y"]),
             phone=doc.get("phone"),
             place_url=doc.get("place_url"),
-            distance=int(doc.get("distance", 0)) if doc.get("distance") else None,
-            # 카카오맵 API에는 평점이 없으므로 더미값 또는 별도 API 필요
-            rating=None,
-            review_count=None
+            distance=int(doc.get("distance", 0)) if doc.get("distance") else None
         )
-
-    def _filter_by_rating(self, locations: List[Location], min_rating: float = 4.0) -> List[Location]:
-        """
-        평점 기반 필터링 (카카오맵 API에는 평점이 없으므로 대안 사용)
-
-        대안 방법:
-        1. 카테고리 신뢰도 사용 (대형 체인 > 로컬)
-        2. 리뷰가 많은 장소 우선 (카카오맵 place_url 크롤링 필요)
-        3. 현재는 거리 + 카테고리 신뢰도로 정렬
-        """
-        # 신뢰할 수 있는 카테고리 키워드
-        trusted_keywords = ["맛집", "유명", "본점", "직영", "공식"]
-
-        def calculate_score(loc: Location) -> float:
-            score = 0.0
-
-            # 거리 점수 (가까울수록 높음)
-            if loc.distance:
-                distance_score = max(0, 1000 - loc.distance) / 1000
-                score += distance_score * 0.5
-
-            # 카테고리 신뢰도 점수
-            for keyword in trusted_keywords:
-                if keyword in loc.name or keyword in loc.category:
-                    score += 0.5
-                    break
-
-            # 전화번호가 있으면 신뢰도 증가
-            if loc.phone:
-                score += 0.3
-
-            return score
-
-        # 점수 기반 정렬
-        scored_locations = [(loc, calculate_score(loc)) for loc in locations]
-        scored_locations.sort(key=lambda x: x[1], reverse=True)
-
-        return [loc for loc, score in scored_locations]
 
     async def find_activity_places(
             self,
@@ -97,28 +56,39 @@ class KakaoMapClient:
         - foodie: 맛집 투어 (유명 맛집)
         - nightlife: 나이트 라이프 (클럽, 바, 루프탑)
         """
-        # 테마별 키워드 매핑
-        theme_keywords = {
-            "cultural": [f"{location_name} 미술관", f"{location_name} 박물관",
-                         f"{location_name} 갤러리", f"{location_name} 전시"],
-            "healing": [f"{location_name} 공원", f"{location_name} 산책",
-                        f"{location_name} 힐링", f"{location_name} 자연"],
-            "activity": [f"{location_name} 방탈출", f"{location_name} 체험",
-                         f"{location_name} 액티비티", f"{location_name} 놀거리"],
-            "foodie": [f"{location_name} 맛집", f"{location_name} 유명 음식점"],
-            "nightlife": [f"{location_name} 바", f"{location_name} 루프탑",
-                          f"{location_name} 나이트"],
+        # 테마별 키워드 매핑 및 카테고리 코드
+        theme_configs = {
+            "cultural": {
+                "keywords": [f"{location_name} 미술관", f"{location_name} 박물관", f"{location_name} 전시"],
+                "category_code": "CT1"  # 문화시설
+            },
+            "healing": {
+                "keywords": [f"{location_name} 공원", f"{location_name} 산책", f"{location_name} 힐링"],
+                "category_code": "AT4"  # 관광명소
+            },
+            "activity": {
+                "keywords": [f"{location_name} 방탈출", f"{location_name} 체험", f"{location_name} 액티비티"],
+                "category_code": None
+            },
+            "foodie": {
+                "keywords": [f"{location_name} 맛집"],
+                "category_code": "FD6"  # 음식점
+            },
+            "nightlife": {
+                "keywords": [f"{location_name} 바", f"{location_name} 펍", f"{location_name} 이자카야"],
+                "category_code": None  # 술집은 FD6지만 주점 등으로 분류될 수 있어 키워드 위주
+            }
         }
 
-        # 기본 키워드 (테마가 없을 때)
-        default_keywords = [
-            f"{location_name} 관광지",
-            f"{location_name} 명소",
-            f"{location_name} 공원",
-            f"{location_name} 박물관"
-        ]
+        # 기본 설정 (테마가 없거나 매칭 안될 때)
+        default_config = {
+            "keywords": [f"{location_name} 가볼만한곳", f"{location_name} 명소"],
+            "category_code": "AT4"  # 기본적으로 관광명소 위주
+        }
 
-        keywords = theme_keywords.get(theme, default_keywords)
+        config = theme_configs.get(theme, default_config)
+        keywords = config["keywords"]
+        category_code = config.get("category_code")
 
         all_results = []
         async with httpx.AsyncClient() as client:
@@ -128,6 +98,10 @@ class KakaoMapClient:
                     "size": size,
                     "sort": "accuracy"
                 }
+                
+                # 카테고리 코드가 있으면 파라미터에 추가하여 필터링 강화
+                if category_code:
+                    params["category_group_code"] = category_code
 
                 try:
                     response = await client.get(
@@ -152,10 +126,7 @@ class KakaoMapClient:
                 seen.add(loc.name)
                 unique_results.append(loc)
 
-        # 평점/신뢰도 기반 필터링
-        filtered_results = self._filter_by_rating(unique_results)
-
-        return filtered_results[:size]
+        return unique_results[:size]
 
     async def find_specific_place(self, place_name: str) -> Optional[Location]:
         """특정 장소 하나 검색"""
@@ -188,7 +159,7 @@ class KakaoMapClient:
             size: int = 15,  # 필터링을 위해 더 많이 가져옴
             sort: str = "distance"
     ) -> List[Location]:
-        """카테고리별 장소 검색 (평점 필터링 포함)"""
+        """카테고리별 장소 검색"""
         async with httpx.AsyncClient() as client:
             params = {
                 "category_group_code": category_code,
@@ -212,10 +183,7 @@ class KakaoMapClient:
                 location = self._parse_location(doc)
                 results.append(location)
 
-            # 평점 기반 필터링
-            filtered_results = self._filter_by_rating(results)
-
-            return filtered_results[:10]  # 상위 10개만 반환
+            return results[:size]  # 요청한 크기만큼 반환
 
     async def search_nearby_by_keyword(
             self,
@@ -225,7 +193,7 @@ class KakaoMapClient:
             radius: int = 500,
             size: int = 15
     ) -> List[Location]:
-        """좌표 주변 키워드 검색 (평점 필터링 포함)"""
+        """좌표 주변 키워드 검색"""
         async with httpx.AsyncClient() as client:
             params = {
                 "query": keyword,
@@ -249,10 +217,7 @@ class KakaoMapClient:
                 location = self._parse_location(doc)
                 results.append(location)
 
-            # 평점 기반 필터링
-            filtered_results = self._filter_by_rating(results)
-
-            return filtered_results[:10]
+            return results[:size]
 
     async def find_dining_places(
             self,
