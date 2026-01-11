@@ -23,11 +23,10 @@ async def test_hil_flow():
             print("Messages:", data.get("messages", [])[-2:]) # Show last 2 messages
             
             if status == "waiting_permission":
-                print("\n-> Agent is waiting for user preference!")
+                print("\n-> Agent is waiting for user preference (Play)!")
                 
-                # 2. Provide Feedback
+                # 2. Provide Feedback (Play)
                 print("\n2. Sending feedback (Category: 방탈출)...")
-                # wait a bit
                 await asyncio.sleep(1)
                 
                 resp2 = await client.post(
@@ -37,17 +36,40 @@ async def test_hil_flow():
                 )
                 print("Status:", resp2.status_code)
                 data2 = resp2.json()
+                status2 = data2.get("status")
                 
-                print(f"Final Status: {data2.get('status')}")
-                schedule = data2.get("result", {}).get("schedule", [])
-                print(f"Schedule items: {len(schedule)}")
+                if status2 == "waiting_permission":
+                     print("\n-> Agent is waiting for user preference (Food)!")
+                     print("Messages:", data2.get("messages", [])[-1:])
+                     
+                     # 3. Provide Feedback (Food)
+                     print("\n3. Sending feedback (Food: 파스타)...")
+                     await asyncio.sleep(1)
+                     
+                     resp3 = await client.post(
+                        "http://localhost:8000/api/feedback",
+                        json={"thread_id": thread_id, "category": "파스타"},
+                        timeout=30.0
+                     )
+                     print("Status:", resp3.status_code)
+                     data3 = resp3.json()
+                     
+                     print(f"Final Status: {data3.get('status')}")
+                     schedule = data3.get("result", {}).get("schedule", [])
+                     print(f"Schedule items: {len(schedule)}")
+                     
+                     # Check results
+                     attractions = data3.get("result", {}).get("attractions", [])
+                     restaurants = data3.get("result", {}).get("restaurants", [])
+                     print("\nFound Attractions:")
+                     for a in attractions:
+                         print(f"- {a['name']} ({a['category']})")
+                     print("\nFound Restaurants:")
+                     for r in restaurants:
+                         print(f"- {r['name']} ({r['category']})")
                 
-                # Check if attractions match preference
-                attractions = data2.get("result", {}).get("attractions", [])
-                print("\nFound Attractions:")
-                for a in attractions:
-                    print(f"- {a['name']} ({a['category']})")
-                    
+                else:
+                    print(f"Unexpected status after first feedback: {status2}")
             else:
                 print("Unexpected status. HIL didn't trigger?")
 
