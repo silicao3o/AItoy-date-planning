@@ -12,6 +12,11 @@ AI 기반으로 서울의 핫플레이스 데이트/놀거리 코스를 자동�
   - **장소 확인**: 입력한 장소가 모호할 경우 다시 확인합니다.
 - **동선 기반 코스 추천**: 놀거리 -> 식사 -> 카페 -> 술집 순서의 자연스러운 코스를 생성합니다.
 - **Kakao Map 연동**: 실제 위치 기반으로 주변 장소를 검색합니다.
+- **📊 데이터베이스 로깅**: 
+  - **사용자 추적**: 각 사용자의 워크플로우 히스토리 저장
+  - **노드 실행 기록**: 각 노드의 실행 시간, 상태, state 변경 추적
+  - **LLM 생성 기록**: 프롬프트, 출력, 모델 정보, 토큰 사용량 기록
+  - **성능 분석**: 노드별 평균 실행 시간, LLM 응답 시간 등 메트릭 수집
 
 ## 🛠️ 사전 요구사항
 
@@ -20,6 +25,8 @@ AI 기반으로 서울의 핫플레이스 데이트/놀거리 코스를 자동�
   - **[Ollama](https://ollama.com/)** (로컬 실행): `llama3.2` 모델 설치 필요 (`ollama pull llama3.2`)
   - **OpenAI API** (클라우드 실행): `OPENAI_API_KEY` 발급 필요. `agent.py`에서 모델 변경 가능.
 - **Kakao Developers API Key**: 로컬 검색 API 사용을 위해 필요합니다.
+- **Neon PostgreSQL**: 데이터베이스 (무료 플랜 사용 가능)
+  - [Neon Console](https://console.neon.tech/)에서 계정 생성 및 데이터베이스 설정
 
 ## 🚀 설치 및 실행 방법 (uv 사용)
 
@@ -50,6 +57,9 @@ uv pip install -e .
 ```env
 KAKAO_REST_API_KEY=your_kakao_api_key_here
 
+# Database - Neon PostgreSQL (필수)
+DATABASE_URL=postgresql://user:password@ep-xxx.region.aws.neon.tech/trip_planner?sslmode=require
+
 # OpenAI 사용 시 (선택)
 OPENAI_API_KEY=your_openai_api_key_here
 # 사용할 모델 변경은 src/agent.py에서 가능합니다.
@@ -59,7 +69,23 @@ OPENAI_API_KEY=your_openai_api_key_here
 # LANGCHAIN_TRACING_V2=true
 ```
 
-### 4. Ollama 실행
+**Neon PostgreSQL 연결 문자열 얻기:**
+1. [Neon Console](https://console.neon.tech/)에 로그인
+2. 프로젝트 선택 또는 생성
+3. "Connection Details" 섹션에서 연결 문자열 복사
+4. `.env` 파일의 `DATABASE_URL`에 붙여넣기
+
+### 4. 데이터베이스 초기화
+```bash
+# 초기 마이그레이션 생성 및 적용
+./init_migration.sh
+
+# 또는 수동으로:
+alembic revision --autogenerate -m "Initial schema"
+alembic upgrade head
+```
+
+### 5. Ollama 실행
 터미널에서 Ollama 서버가 실행 중이어야 합니다.
 ```bash
 ollama serve
@@ -67,7 +93,7 @@ ollama serve
 ollama list
 ```
 
-### 5. 서버 실행
+### 6. 서버 실행
 FastAPI 서버를 실행합니다.
 ```bash
 uvicorn src.server:app --reload --port 8000
@@ -94,16 +120,43 @@ python test_hil_place.py
 ```
 .
 ├── src/
-│   ├── agent.py        # 에이전트 오케스트레이션 및 초기화
-│   ├── graph.py        # LangGraph 워크플로우 구성 (Graph, Edges)
-│   ├── nodes.py        # 워크플로우(Graph)의 각 노드 로직
-│   ├── state.py        # 에이전트 상태 정의 (TripState)
-│   ├── models.py       # 데이터 모델 (Pydantic: Location, ScheduleItem 등)
-│   ├── kakao_client.py # 카카오맵 API 클라이언트
+│   ├── agent.py           # 에이전트 오케스트레이션 및 초기화
+│   ├── graph.py           # LangGraph 워크플로우 구성 (Graph, Edges)
+│   ├── nodes.py           # 워크플로우(Graph)의 각 노드 로직
+│   ├── state.py           # 에이전트 상태 정의 (TripState)
+│   ├── models.py          # 데이터 모델 (Pydantic: Location, ScheduleItem 등)
+│   ├── kakao_client.py    # 카카오맵 API 클라이언트
 │   ├── time_calculator.py # 시간/거리 계산 유틸리티
-│   ├── server.py       # FastAPI 서버 진입점
-│   └── main.py         # (Optional) CLI 실행용
-├── test_hil.py         # HIL 테스트 스크립트
-├── .env                # 환경 변수 설정
-└── pyproject.toml      # 프로젝트 설정
+│   ├── database.py        # 데이터베이스 스키마 정의 (SQLAlchemy ORM)
+│   ├── db_logger.py       # 워크플로우 실행 로깅 헬퍼
+│   ├── example_db_usage.py # 데이터베이스 사용 예시
+│   ├── server.py          # FastAPI 서버 진입점
+│   └── main.py            # (Optional) CLI 실행용
+├── test_hil.py            # HIL 테스트 스크립트
+├── DATABASE_GUIDE.md      # 데이터베이스 통합 가이드
+├── DATABASE_SCHEMA.md     # 데이터베이스 스키마 다이어그램
+├── .env                   # 환경 변수 설정
+└── pyproject.toml         # 프로젝트 설정
 ```
+
+## 📊 데이터베이스 사용법
+
+### 데이터베이스 초기화 및 예시 실행
+```bash
+# 데이터베이스 사용 예시 실행 (자동으로 DB 생성)
+uv run python src/example_db_usage.py
+
+# 생성된 데이터베이스 확인
+sqlite3 trip_planner.db
+> SELECT * FROM users;
+> SELECT * FROM workflows ORDER BY created_at DESC LIMIT 5;
+```
+
+### 주요 테이블
+- **users**: 사용자 정보
+- **workflows**: 워크플로우 실행 기록 (user_input, settings, final_itinerary 등)
+- **nodes**: 각 노드 실행 기록 (실행 시간, state 변경, 에러 등)
+- **generations**: LLM 생성 기록 (프롬프트, 출력, 모델, 토큰 사용량 등)
+
+자세한 내용은 [DATABASE_GUIDE.md](DATABASE_GUIDE.md)와 [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md)를 참조하세요.
+
