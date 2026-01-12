@@ -3,6 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 from typing import Optional
+import uuid
 
 Base = declarative_base()
 
@@ -28,7 +29,8 @@ class Workflow(Base):
     """워크플로우 실행 기록 테이블"""
     __tablename__ = 'workflows'
     
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id = Column(String(255), nullable=True, index=True)  # LangGraph thread_id 매핑용
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
     
     # 워크플로우 메타데이터
@@ -68,8 +70,8 @@ class Node(Base):
     """워크플로우 노드 실행 기록 테이블"""
     __tablename__ = 'nodes'
     
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    workflow_id = Column(Integer, ForeignKey('workflows.id'), nullable=False, index=True)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    workflow_id = Column(String(36), ForeignKey('workflows.id'), nullable=False, index=True)
     
     # 노드 정보
     node_name = Column(String(255), nullable=False)  # analyze_user_input, discover_activity_places 등
@@ -107,9 +109,9 @@ class Generation(Base):
     """LLM 생성 기록 테이블"""
     __tablename__ = 'generations'
     
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    workflow_id = Column(Integer, ForeignKey('workflows.id'), nullable=False, index=True)
-    node_id = Column(Integer, ForeignKey('nodes.id'), nullable=True, index=True)  # 어떤 노드에서 생성되었는지
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    workflow_id = Column(String(36), ForeignKey('workflows.id'), nullable=False, index=True)
+    node_id = Column(String(36), ForeignKey('nodes.id'), nullable=True, index=True)  # 어떤 노드에서 생성되었는지
     
     # 모델 정보
     model_name = Column(String(255), nullable=False)  # llama3.2, gpt-4 등
@@ -203,10 +205,15 @@ def create_user(session, username: str, email: Optional[str] = None) -> User:
     return user
 
 
-def create_workflow(session, user_id: int, user_input: str, **kwargs) -> Workflow:
+def create_workflow(session, user_id: int, user_input: str, workflow_id: str = None, session_id: str = None, **kwargs) -> Workflow:
     """워크플로우 생성"""
+    if workflow_id is None:
+        workflow_id = str(uuid.uuid4())
+        
     workflow = Workflow(
+        id=workflow_id,
         user_id=user_id,
+        session_id=session_id,
         user_input=user_input,
         **kwargs
     )
@@ -215,10 +222,11 @@ def create_workflow(session, user_id: int, user_input: str, **kwargs) -> Workflo
     return workflow
 
 
-def create_node(session, workflow_id: int, node_name: str, node_type: str, 
+def create_node(session, workflow_id: str, node_name: str, node_type: str, 
                 execution_order: int, **kwargs) -> Node:
     """노드 생성"""
     node = Node(
+        id=str(uuid.uuid4()),
         workflow_id=workflow_id,
         node_name=node_name,
         node_type=node_type,
@@ -230,10 +238,11 @@ def create_node(session, workflow_id: int, node_name: str, node_type: str,
     return node
 
 
-def create_generation(session, workflow_id: int, model_name: str, 
+def create_generation(session, workflow_id: str, model_name: str, 
                      user_prompt: str, output: str, **kwargs) -> Generation:
     """생성 기록 생성"""
     generation = Generation(
+        id=str(uuid.uuid4()),
         workflow_id=workflow_id,
         model_name=model_name,
         user_prompt=user_prompt,

@@ -9,6 +9,8 @@ from models import TimeSettings, DateTheme
 from state import TripState
 from nodes import TripNodes
 from graph import build_trip_graph
+from database import init_db
+from db_logger import DatabaseLogger
 
 load_dotenv()
 
@@ -25,49 +27,89 @@ class TripPlannerAgent:
         self.time_calc = TimeCalculator()
         self.memory = MemorySaver()
         
+        # 데이터베이스 초기화
+        try:
+            self.engine = init_db()
+            print("[INFO] Database initialized successfully")
+        except Exception as e:
+            print(f"[WARNING] Database initialization failed: {e}")
+            self.engine = None
+        
         # 노드 및 그래프 초기화
-        self.nodes = TripNodes(self.llm, self.kakao_client, self.time_calc)
+        self.nodes = TripNodes(self.llm, self.kakao_client, self.time_calc, self.engine)
         self.graph = build_trip_graph(self.nodes, self.memory)
 
     async def plan_trip(
             self,
             user_input: str,
-            session_id: str,
+            session_id: Optional[str] = None,  # 이전 버전 호환용 (사용 안함)
             time_settings: Optional[TimeSettings] = None,
             date_theme: Optional[DateTheme] = None
     ) -> dict:
         """여행 계획 실행"""
-
-        config = {"configurable": {"thread_id": session_id}}
-        current_state = await self.graph.aget_state(config)
-
-        if not current_state.values:
-            initial_state: TripState = {
-                "user_input": user_input,
-                "input_type": None,
-                "parsed_location": None,
-                "starting_point": None,
-                "activity_places": [],
-                "dining_places": [],
-                "cafe_places": [],
-                "drinking_places": [],
-                "final_itinerary": [],
-                "search_radius": 2000,
-                "progress_messages": [],
-                "needs_refinement": False,
-                "user_activity_preference": None,
-                "user_food_preference": None,
-                "user_feedback": None,
-                "next_action": None,
-                "time_settings": time_settings,
-                "date_theme": date_theme,
-                "user_intent": None
-            }
-            await self.graph.ainvoke(initial_state, config)
-
+        # 워크플로우 ID 생성 (이것이 곧 thread_id가 됨)
+        import uuid
+        workflow_id = str(uuid.uuid4())
+        
+        config = {"configurable": {"thread_id": workflow_id}}
+        # 초기 상태이므로 로드할 필요 없음 (항상 새로 시작)
+        
+        initial_state: TripState = {
+            "user_input": user_input,
+            "input_type": None,
+            "parsed_location": None,
+            "starting_point": None,
+            "activity_places": [],
+            "dining_places": [],
+            "cafe_places": [],
+            "drinking_places": [],
+            "final_itinerary": [],
+            "search_radius": 2000,
+            "progress_messages": [],
+            "needs_refinement": False,
+            "user_activity_preference": None,
+            "user_food_preference": None,
+            "user_feedback": None,
+            "next_action": None,
+            "time_settings": time_settings,
+            "date_theme": date_theme,
+            "user_intent": None,
+            "workflow_id": None
+        }
+        
+        # DB에 워크플로우 시작 기록
+        if self.engine:
+            try:
+                logger = DatabaseLogger(self.engine)
+                # 여기서는 사용자 구분이 모호하므로 임시 유저 사용 (TODO: 로그인 연동 필요)
+                user = logger.get_or_create_user(username="anonymous")
+                workflow = logger.start_workflow(user.id, initial_state, workflow_id=workflow_id, session_id=workflow_id)
+                initial_state["workflow_id"] = workflow_id
+                logger.close()
+                print(f"[DB] Workflow started with ID: {workflow.id}")
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f"[ERROR] Failed to log workflow start: {e}")
+        else:
+            initial_state["workflow_id"] = workflow_id
+        
+        await self.graph.ainvoke(initial_state, config)
+        
+        # 상태 조회
         final_state = await self.graph.aget_state(config)
 
         if final_state.next:
+            # 워크플로우 상태 업데이트 (대기 중)
+            if self.engine:
+                try:
+                    logger = DatabaseLogger(self.engine)
+                    logger.current_workflow_id = final_state.values.get("workflow_id")
+                    logger.complete_workflow(final_state.values, status="awaiting_input")
+                    logger.close()
+                except Exception as e:
+                    print(f"[ERROR] Failed to log workflow status update: {e}")
+
             return {
                 "status": "awaiting_user_input",
                 "pending_step": final_state.next,
@@ -81,8 +123,20 @@ class TripPlannerAgent:
                     "schedule": [item.dict() for item in final_state.values.get("final_itinerary", [])]
                 },
                 "progress": final_state.values.get("progress_messages", []),
-                "session_id": session_id
+                "session_id": workflow_id,
+                "workflow_id": workflow_id
             }
+
+        # 워크플로우 완료 기록
+        if self.engine:
+            try:
+                logger = DatabaseLogger(self.engine)
+                logger.current_workflow_id = final_state.values.get("workflow_id")
+                logger.complete_workflow(final_state.values)
+                logger.close()
+                print(f"[DB] Workflow completed")
+            except Exception as e:
+                print(f"[ERROR] Failed to log workflow completion: {e}")
 
         return {
             "status": "completed",
@@ -103,12 +157,15 @@ class TripPlannerAgent:
                 "schedule": [item.dict() for item in final_state.values.get("final_itinerary", [])]
             },
             "progress": final_state.values.get("progress_messages", []),
-            "session_id": session_id
+            "progress": final_state.values.get("progress_messages", []),
+            "session_id": workflow_id,
+            "workflow_id": workflow_id
         }
 
-    async def provide_user_feedback(self, session_id: str, feedback_content: str) -> dict:
-        """사용자 피드백 제공"""
-        config = {"configurable": {"thread_id": session_id}}
+    async def provide_user_feedback(self, workflow_id: str, feedback_content: str) -> dict:
+        """사용자 피드백 제공 (workflow_id를 thread_id로 사용)"""
+        # workflow_id 자체가 thread_id
+        config = {"configurable": {"thread_id": workflow_id}}
 
         current_state = await self.graph.aget_state(config)
         if not current_state.next:
@@ -140,8 +197,21 @@ class TripPlannerAgent:
                     "schedule": [item.dict() for item in final_state.values.get("final_itinerary", [])]
                 },
                 "progress": final_state.values.get("progress_messages", []),
-                "session_id": session_id
+                "progress": final_state.values.get("progress_messages", []),
+                "session_id": workflow_id,
+                "workflow_id": workflow_id
             }
+
+        # 워크플로우 완료 기록 (피드백 후)
+        if self.engine:
+            try:
+                logger = DatabaseLogger(self.engine)
+                logger.current_workflow_id = final_state.values.get("workflow_id")
+                # 피드백 후 완료되었으면 completed, 아니면 유지 (여기서는 완료된 경우만 진입)
+                logger.complete_workflow(final_state.values)
+                logger.close()
+            except Exception as e:
+                print(f"[ERROR] Failed to log workflow completion (feedback): {e}")
 
         return {
             "status": "completed",
@@ -162,5 +232,7 @@ class TripPlannerAgent:
                 "schedule": [item.dict() for item in final_state.values.get("final_itinerary", [])]
             },
             "progress": final_state.values.get("progress_messages", []),
-            "session_id": session_id
+            "progress": final_state.values.get("progress_messages", []),
+            "session_id": workflow_id,
+            "workflow_id": workflow_id
         }
