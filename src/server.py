@@ -7,11 +7,11 @@ import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from agent import TripPlannerAgent
-from models import TimeSettings, DateTheme
+from models import TimeSettings
 
 app = FastAPI(
-    title="Seoul Trip Planner API v2",
-    description="⏰시간대별 일정 / ⭐평점 필터링 / 🎨테마 선택 기능 포함",
+    title="Seoul Trip Planner API",
+    description="자연어 기반 서울 여행 일정 생성 API",
     version="2.0.0"
 )
 
@@ -25,7 +25,6 @@ class TripPlanRequest(BaseModel):
 
     # 프론트엔드에서 설정한 옵션들
     time_settings: Optional[TimeSettings] = Field(default=None, description="시간 설정")
-    date_theme: Optional[DateTheme] = Field(default=None, description="데이트 테마")
 
     class Config:
         json_schema_extra = {
@@ -36,10 +35,6 @@ class TripPlanRequest(BaseModel):
                     "enabled": True,
                     "start_time": "14:00",
                     "duration_hours": 6
-                },
-                "date_theme": {
-                    "theme": "cultural",
-                    "atmosphere": "romantic"
                 }
             }
         }
@@ -56,42 +51,31 @@ async def create_trip_plan(request: TripPlanRequest):
     """
     여행 일정 생성
 
-    ## 새로운 기능 🎉
-    - ⏰ **시간대별 일정**: 시작 시간과 소요 시간을 설정하면 구체적인 시간표 생성
-    - ⭐ **평점 기반 필터링**: 신뢰도 높은 장소 우선 추천
-    - 🎨 **데이트 테마**: 문화/힐링/액티비티/맛집/나이트 중 선택
-    - 🎭 **분위기 설정**: 캐주얼/로맨틱/활기찬 분위기에 맞는 장소 추천
+    자연어 입력을 분석하여 활동 → 식사 → 카페 → 술집 순서의 일정을 생성합니다.
 
     ## Request Body
-    - **user_input**: 방문 지역 및 활동/식사 요구사항 (자연어)
+    - **user_input**: 자연어 입력 (예: "홍대에서 보드게임하고 한식 먹을래")
     - **session_id**: 세션 ID
-    - **time_settings**: (선택)
+    - **time_settings**: (선택) 시간 설정
         - enabled: 시간 설정 사용 여부
         - start_time: 시작 시간 (HH:MM)
         - duration_hours: 데이트 시간 (2~12시간)
-    - **date_theme**: (선택)
-        - theme: cultural/healing/activity/foodie/nightlife
-        - atmosphere: casual/romantic/energetic
 
     ## Response
-    - **status**: "awaiting_user_input" 또는 "completed"
+    - **status**: "awaiting_user_input" (HIL 필요) 또는 "completed"
     - **itinerary**: 일정 정보
-        - schedule: 시간표 포함된 상세 일정 (time_settings가 enabled일 때)
-        - locations: 장소 목록 (평점 기반 필터링 적용)
     - **progress**: 진행 메시지
     """
     try:
-        print(f"[API] 여행 계획 요청 v2")
+        print(f"[API] 여행 계획 요청")
         print(f"  - 입력: {request.user_input}")
         print(f"  - 세션: {request.session_id}")
         print(f"  - 시간 설정: {request.time_settings.enabled if request.time_settings else False}")
-        print(f"  - 테마: {request.date_theme.theme if request.date_theme else 'None'}")
 
         result = await agent.plan_trip(
             user_input=request.user_input,
             session_id=request.session_id,
-            time_settings=request.time_settings,
-            date_theme=request.date_theme
+            time_settings=request.time_settings
         )
         return result
     except Exception as e:
@@ -118,13 +102,7 @@ async def health_check():
     """헬스 체크"""
     return {
         "status": "healthy",
-        "service": "Seoul Trip Planner v2",
-        "features": [
-            "⏰ 시간대별 일정 생성",
-            "⭐ 평점 기반 필터링",
-            "🎨 데이트 테마 선택",
-            "🎭 분위기 맞춤 추천"
-        ]
+        "service": "Seoul Trip Planner"
     }
 
 
@@ -137,22 +115,6 @@ async def get_default_settings():
             "default_duration_hours": 6,
             "min_duration_hours": 2,
             "max_duration_hours": 12
-        },
-        "themes": {
-            "options": [
-                {"value": "cultural", "label": "🎨 문화/예술", "description": "미술관, 박물관, 갤러리, 전시"},
-                {"value": "healing", "label": "🌳 힐링/자연", "description": "공원, 산책로, 조용한 카페"},
-                {"value": "activity", "label": "🎮 액티비티", "description": "방탈출, 체험, 놀거리"},
-                {"value": "foodie", "label": "🍽️ 맛집 투어", "description": "유명 맛집 중심"},
-                {"value": "nightlife", "label": "🌃 나이트 라이프", "description": "바, 클럽, 루프탑"}
-            ]
-        },
-        "atmosphere": {
-            "options": [
-                {"value": "casual", "label": "😊 캐주얼", "description": "편안하고 자연스러운"},
-                {"value": "romantic", "label": "💕 로맨틱", "description": "분위기 있고 특별한"},
-                {"value": "energetic", "label": "⚡ 활기찬", "description": "역동적이고 트렌디한"}
-            ]
         }
     }
 

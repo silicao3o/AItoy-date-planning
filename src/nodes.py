@@ -96,27 +96,21 @@ class TripNodes:
         return content
 
     def route_after_analysis(self, state: TripState) -> str:
-        """입력 분석 후 라우팅 (테마 및 자연어 분석 결과 고려)"""
+        """입력 분석 후 라우팅 (자연어 분석 결과 기반)"""
         input_type = state.get("input_type", "region")
         user_intent = state.get("user_intent")
-        date_theme = state.get("date_theme")
 
         # 1. 특정 장소 검색인 경우 -> 활동 검색 건너뜀
         if input_type == "specific_place":
-            # 음식 취향도 이미 알거나 필요 없다면 바로 식당 검색으로
             if user_intent and (not user_intent.dining_required or user_intent.food_preference):
                 return "skip_to_dining"
             return "skip_to_food"
-            
-        # 1.5 활동이 필요 없는 경우 -> 바로 식당/카페 검색으로
+
+        # 2. 활동이 필요 없는 경우 -> 바로 식당/카페 검색으로
         if user_intent and not user_intent.activity_required:
             if not user_intent.dining_required or user_intent.food_preference:
                 return "skip_to_dining"
             return "skip_to_food"
-
-        # 2. 테마가 설정되어 있는 경우 -> HIL 건너뛰기
-        if date_theme and date_theme.theme:
-            return "skip_to_activity"
 
         # 3. 자연어 분석 결과에 활동 선호도나 키워드가 있는 경우 -> HIL 건너뛰기
         if user_intent and (user_intent.activity_preference or user_intent.activity_keywords):
@@ -140,24 +134,18 @@ class TripNodes:
         """사용자 입력 분석 (JSON 기반 구조화)"""
         async with self.log_context(state, "analyze_user_input", "analysis"):
             print(f"[DEBUG] Analyzing input: {state['user_input']}")
-        
-            # 테마 정보가 있다면 함께 제공하여 LLM이 판단하게 함
-            date_theme = state.get("date_theme")
-            theme_info = f"선택된 테마: {date_theme.theme}, 분위기: {date_theme.atmosphere}" if date_theme else "선택된 테마 없음"
 
             # 자연어 분석 프롬프트 (JSON 출력 유도)
             system_prompt = f"""
-            당신은 여행 계획 전문가입니다. 사용자의 자연어 입력과 선택된 테마 정보를 종합하여 구조화된 JSON 데이터로 변환하세요.
+            당신은 여행 계획 전문가입니다. 사용자의 자연어 입력을 분석하여 구조화된 JSON 데이터로 변환하세요.
 
             [입력 정보]
             사용자 발화: {state['user_input']}
-            {theme_info}
 
             [지시 사항]
-            1. 사용자의 발화가 가장 우선입니다.
-            2. 발화에 없는 내용은 '선택된 테마' 정보를 참고하여 키워드를 채우세요.
-            3. 테마도 없고 발화도 없으면 일반적인 좋은 곳을 추천하기 위해 required=true로 설정하세요.
-            4. "필요 없어", "안 갈래" 등의 부정 표현이 있으면 required=false로 설정하세요.
+            1. 사용자 발화에서 지역, 활동, 음식, 카페, 술집 관련 정보를 추출하세요.
+            2. 명시되지 않은 항목은 required=true로 설정하여 추천받도록 합니다.
+            3. "필요 없어", "안 갈래" 등의 부정 표현이 있으면 required=false로 설정하세요.
 
             [JSON 응답 형식]
             {{
@@ -278,7 +266,7 @@ class TripNodes:
         return state
 
     async def discover_activity_places(self, state: TripState) -> TripState:
-        """활동 장소 검색 (테마 반영)"""
+        """활동 장소 검색"""
         async with self.log_context(state, "discover_activity_places", "search"):
             # 자연어 분석 결과 확인
             user_intent = state.get("user_intent")
@@ -286,20 +274,16 @@ class TripNodes:
                 state["activity_places"] = []
                 state["progress_messages"].append("✓ 활동 장소 검색 건너뛰기 (사용자 요청)")
                 return state
-        
+
             location = state["parsed_location"]
             radius = state.get("search_radius", 2000)
-
-            # 🎨 테마 설정 vs 사용자 선호도 경쟁
-            date_theme = state.get("date_theme")
-            theme = date_theme.theme if date_theme else None
 
             # 사용자 선호도 (NLP 또는 HIL)
             preference = state.get("user_activity_preference")
 
             # 1. 사용자 선호도가 명확하면 최우선 적용
             if preference and preference not in ["상관없음", "없음"]:
-                state["progress_messages"].append(f"✓ '{preference}' 테마로 활동 장소를 검색합니다. (사용자 선호 우선)")
+                state["progress_messages"].append(f"✓ '{preference}' 기준으로 활동 장소를 검색합니다.")
 
                 # 키워드 확장
                 expansion_prompt = f"""
@@ -359,22 +343,16 @@ class TripNodes:
 
                 state["activity_places"] = unique_places[:5]
 
-            # 2. 선호도가 없으면 테마 적용
-            elif theme:
-                state["progress_messages"].append(f"✓ '{theme}' 테마로 활동 장소를 검색합니다.")
-                places = await self.kakao_client.find_activity_places(location, theme, radius)
-                state["activity_places"] = places
-
-            # 3. 둘 다 없으면 기본 검색
+            # 2. 선호도가 없으면 기본 검색
             else:
-                places = await self.kakao_client.find_activity_places(location, None, radius)
+                places = await self.kakao_client.find_activity_places(location, radius)
                 state["activity_places"] = places
 
             state["progress_messages"].append(f"✓ 활동 장소 {len(state['activity_places'])}개 발견")
             return state
 
     async def discover_dining_places(self, state: TripState) -> TripState:
-        """식사 장소 검색 (분위기 반영)"""
+        """식사 장소 검색"""
         async with self.log_context(state, "discover_dining_places", "search"):
             # 자연어 분석 결과 확인
             user_intent = state.get("user_intent")
@@ -382,7 +360,7 @@ class TripNodes:
                 state["dining_places"] = []
                 state["progress_messages"].append("✓ 식사 장소 검색 건너뛰기 (사용자 요청)")
                 return state
-        
+
             current_locations = []
 
             if state["input_type"] == "specific_place" and state.get("starting_point"):
@@ -395,12 +373,8 @@ class TripNodes:
             if not current_locations:
                 return state
 
-            # 🎨 분위기 설정 활용
-            date_theme = state.get("date_theme")
-            atmosphere = date_theme.atmosphere if date_theme else "casual"
-
             all_dining = []
-        
+
             # 사용자 인텐트 키워드 체크
             intent_keywords = user_intent.food_keywords if user_intent else []
             food_pref = state.get("user_food_preference")
@@ -410,9 +384,9 @@ class TripNodes:
                     # 선호도 + 키워드 조합 (예: "한식 노포 맛집")
                     keyword_parts = [food_pref] + intent_keywords + ["맛집"]
                     keyword = " ".join(keyword_parts)
-                
+
                     state["progress_messages"].append(f"✓ '{keyword}' 검색")
-                
+
                     places = await self.kakao_client.search_nearby_by_keyword(
                         keyword=keyword,
                         x=loc.x,
@@ -421,7 +395,7 @@ class TripNodes:
                         size=3
                     )
                 elif intent_keywords:
-                     # 선호도는 없지만 분위기 키워드는 있는 경우 (예: "조용한 맛집")
+                    # 키워드가 있는 경우 (예: "조용한 맛집")
                     keyword = " ".join(intent_keywords + ["맛집"])
                     state["progress_messages"].append(f"✓ '{keyword}' 검색 (NLP 기반)")
                     places = await self.kakao_client.search_nearby_by_keyword(
@@ -432,11 +406,10 @@ class TripNodes:
                         size=3
                     )
                 else:
-                    # ⭐ 기존 로직: 분위기 설정 활용
+                    # 기본 검색
                     places = await self.kakao_client.find_dining_places(
                         x=loc.x,
                         y=loc.y,
-                        atmosphere=atmosphere,
                         radius=500,
                         size=3
                     )
@@ -456,7 +429,7 @@ class TripNodes:
             return state
 
     async def discover_cafe_places(self, state: TripState) -> TripState:
-        """카페 검색 (분위기 반영)"""
+        """카페 검색"""
         async with self.log_context(state, "discover_cafe_places", "search"):
             # 자연어 분석 결과 확인
             user_intent = state.get("user_intent")
@@ -464,14 +437,10 @@ class TripNodes:
                 state["cafe_places"] = []
                 state["progress_messages"].append("✓ 카페 검색 건너뛰기 (사용자 요청)")
                 return state
-        
+
             if not state["dining_places"]:
                 state["cafe_places"] = []
                 return state
-
-            # 🎨 분위기 설정 활용
-            date_theme = state.get("date_theme")
-            atmosphere = date_theme.atmosphere if date_theme else "casual"
 
             target_places = state["dining_places"][:2]
             all_cafes = []
@@ -479,7 +448,7 @@ class TripNodes:
             for place in target_places:
                 # NLP 키워드 우선 (예: "조용한 카페")
                 intent_keywords = user_intent.cafe_keywords if user_intent else []
-            
+
                 if intent_keywords:
                     keyword = " ".join(intent_keywords + ["카페"])
                     cafes = await self.kakao_client.search_nearby_by_keyword(
@@ -490,11 +459,10 @@ class TripNodes:
                         size=2
                     )
                 else:
-                    # ⭐ 기존 로직: 분위기 반영
+                    # 기본 검색
                     cafes = await self.kakao_client.find_cafe_places(
                         x=place.x,
                         y=place.y,
-                        atmosphere=atmosphere,
                         radius=300,
                         size=2
                     )
@@ -508,7 +476,7 @@ class TripNodes:
                     unique_cafes.append(c)
 
             state["cafe_places"] = unique_cafes[:3]
-            state["progress_messages"].append(f"✓ 카페 {len(unique_cafes)}개 발견 (분위기 기반)")
+            state["progress_messages"].append(f"✓ 카페 {len(unique_cafes)}개 발견")
             return state
 
     async def discover_drinking_places(self, state: TripState) -> TripState:

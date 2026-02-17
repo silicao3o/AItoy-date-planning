@@ -43,7 +43,6 @@ class Workflow(Base):
     
     # 설정 (JSON으로 저장)
     time_settings = Column(JSON, nullable=True)  # TimeSettings 객체
-    date_theme = Column(JSON, nullable=True)  # DateTheme 객체
     user_intent = Column(JSON, nullable=True)  # UserIntent 객체
     
     # 검색 설정

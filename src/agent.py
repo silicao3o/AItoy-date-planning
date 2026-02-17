@@ -5,7 +5,7 @@ from typing import Optional
 
 from kakao_client import KakaoMapClient
 from time_calculator import TimeCalculator
-from models import TimeSettings, DateTheme
+from models import TimeSettings
 from state import TripState
 from nodes import TripNodes
 from graph import build_trip_graph
@@ -16,7 +16,7 @@ load_dotenv()
 
 
 class TripPlannerAgent:
-    """여행 계획 에이전트 (v2 - 시간/평점/테마 기능 포함)"""
+    """여행 계획 에이전트"""
 
     def __init__(self):
         self.llm = ChatOllama(
@@ -42,9 +42,8 @@ class TripPlannerAgent:
     async def plan_trip(
             self,
             user_input: str,
-            session_id: Optional[str] = None,  # 이전 버전 호환용 (사용 안함)
-            time_settings: Optional[TimeSettings] = None,
-            date_theme: Optional[DateTheme] = None
+            session_id: Optional[str] = None,
+            time_settings: Optional[TimeSettings] = None
     ) -> dict:
         """여행 계획 실행"""
         # 워크플로우 ID 생성 (이것이 곧 thread_id가 됨)
@@ -72,7 +71,6 @@ class TripPlannerAgent:
             "user_feedback": None,
             "next_action": None,
             "time_settings": time_settings,
-            "date_theme": date_theme,
             "user_intent": None,
             "workflow_id": None
         }

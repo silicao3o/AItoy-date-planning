@@ -41,18 +41,6 @@ class TimeSettings(BaseModel):
     duration_hours: int = Field(default=6, ge=2, le=12, description="데이트 시간 (시간)")
 
 
-class DateTheme(BaseModel):
-    """데이트 테마"""
-    theme: str = Field(
-        default="casual",
-        description="테마: cultural(문화예술), healing(힐링자연), activity(액티비티), foodie(맛집투어), nightlife(나이트라이프)"
-    )
-    atmosphere: str = Field(
-        default="casual",
-        description="분위기: casual(캐주얼), romantic(로맨틱), energetic(활기찬)"
-    )
-
-
 class UserIntent(BaseModel):
     """자연어 분석 결과"""
     location: str  # 지역명 (예: "홍대", "강남")

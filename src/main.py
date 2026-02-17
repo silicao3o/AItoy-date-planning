@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 from agent import TripPlannerAgent
-from models import TimeSettings, DateTheme
+from models import TimeSettings
 
 
 async def main():
@@ -32,53 +32,13 @@ async def main():
         except ValueError:
             print("! 잘못된 입력. 기본값 사용")
 
-    # 테마 설정 입력 (선택)
-    print("\n🎨 데이트 테마를 선택하세요:")
-    print("  1. 문화/예술 (미술관, 박물관, 전시)")
-    print("  2. 힐링/자연 (공원, 산책, 조용한 카페)")
-    print("  3. 액티비티 (방탈출, 체험, 놀거리)")
-    print("  4. 맛집 투어 (유명 맛집 중심)")
-    print("  5. 나이트 라이프 (바, 클럽, 루프탑)")
-    print("  6. 선택 안 함 (기본 추천)")
-
-    theme_choice = input("선택 (1-6, 기본값: 6): ").strip() or "6"
-
-    theme_map = {
-        "1": "cultural",
-        "2": "healing",
-        "3": "activity",
-        "4": "foodie",
-        "5": "nightlife",
-        "6": None
-    }
-
-    theme = theme_map.get(theme_choice)
-
-    # 분위기 설정
-    atmosphere = None
-    if theme:
-        print("\n🎭 분위기를 선택하세요:")
-        print("  1. 캐주얼 (편안하고 자연스러운)")
-        print("  2. 로맨틱 (분위기 있고 특별한)")
-        print("  3. 활기찬 (역동적이고 트렌디한)")
-
-        atm_choice = input("선택 (1-3, 기본값: 1): ").strip() or "1"
-        atm_map = {"1": "casual", "2": "romantic", "3": "energetic"}
-        atmosphere = atm_map.get(atm_choice, "casual")
-
-    date_theme = None
-    if theme and atmosphere:
-        date_theme = DateTheme(theme=theme, atmosphere=atmosphere)
-        print(f"✓ 테마 설정: {theme} / {atmosphere}")
-
     print(f"\n🔍 '{region}' 여행 계획을 생성하고 있습니다...\n")
 
     # 여행 계획 생성
     result = await agent.plan_trip(
         user_input=region,
         session_id=session_id,
-        time_settings=time_settings,
-        date_theme=date_theme
+        time_settings=time_settings
     )
 
     # 진행 상황 출력

@@ -8,7 +8,7 @@ from datetime import datetime
 from database import init_db
 from db_logger import DatabaseLogger
 from state import TripState
-from models import TimeSettings, DateTheme, UserIntent
+from models import TimeSettings, UserIntent
 
 
 async def example_workflow_with_logging():
@@ -42,10 +42,6 @@ async def example_workflow_with_logging():
                 enabled=True,
                 start_time="14:00",
                 duration_hours=6
-            ),
-            "date_theme": DateTheme(
-                theme="cultural",
-                atmosphere="romantic"
             ),
             "user_intent": None,
             "progress_messages": [],
@@ -205,7 +201,6 @@ async def example_error_handling():
             "final_itinerary": [],
             "search_radius": 2000,
             "time_settings": None,
-            "date_theme": None,
             "user_intent": None,
             "progress_messages": [],
             "needs_refinement": False,

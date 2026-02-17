@@ -13,7 +13,7 @@ from database import (
     create_user, create_workflow, create_node, create_generation
 )
 from state import TripState
-from models import TimeSettings, DateTheme, UserIntent, ScheduleItem
+from models import TimeSettings, UserIntent, ScheduleItem
 
 
 class DatabaseLogger:
@@ -50,14 +50,6 @@ class DatabaseLogger:
                 "duration_hours": ts.duration_hours
             }
         
-        date_theme_dict = None
-        if state.get("date_theme"):
-            dt = state["date_theme"]
-            date_theme_dict = {
-                "theme": dt.theme,
-                "atmosphere": dt.atmosphere
-            }
-        
         user_intent_dict = None
         if state.get("user_intent"):
             ui = state["user_intent"]
@@ -71,7 +63,6 @@ class DatabaseLogger:
             session_id=session_id,
             workflow_id=workflow_id,
             time_settings=time_settings_dict,
-            date_theme=date_theme_dict,
             user_intent=user_intent_dict,
             search_radius=state.get("search_radius", 2000),
             status="running"
