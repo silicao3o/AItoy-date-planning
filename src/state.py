@@ -30,3 +30,5 @@ class TripState(TypedDict):
     user_food_preference: Optional[str]  # 사용자 선호 음식 종류 (HIL용)
     user_feedback: Optional[str]  # 사용자 피드백
     next_action: Optional[str]  # 다음 액션
+    workflow_id: Optional[str]  # DB 워크플로우 ID (UUID)
+    current_node_id: Optional[str]  # 현재 실행 중인 노드 ID (UUID)

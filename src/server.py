@@ -47,7 +47,7 @@ class TripPlanRequest(BaseModel):
 
 class UserFeedbackRequest(BaseModel):
     """사용자 피드백"""
-    session_id: str = Field(..., description="세션 ID")
+    workflow_id: str = Field(..., description="워크플로우 ID (DB)")
     feedback: str = Field(..., description="피드백 내용")
 
 
@@ -104,8 +104,8 @@ async def create_trip_plan(request: TripPlanRequest):
 async def submit_user_feedback(request: UserFeedbackRequest):
     """사용자 피드백 제공"""
     try:
-        print(f"[API] 피드백 수신 - 세션: {request.session_id}")
-        result = await agent.provide_user_feedback(request.session_id, request.feedback)
+        print(f"[API] 피드백 수신 - 워크플로우: {request.workflow_id}")
+        result = await agent.provide_user_feedback(request.workflow_id, request.feedback)
         return result
     except Exception as e:
         import traceback

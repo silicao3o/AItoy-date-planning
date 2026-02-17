@@ -22,7 +22,7 @@ class DatabaseLogger:
     def __init__(self, engine):
         self.engine = engine
         self.session = get_session(engine)
-        self.current_workflow_id: Optional[int] = None
+        self.current_workflow_id: Optional[str] = None
         self.current_user_id: Optional[int] = None
         self.node_execution_order = 0
         
@@ -38,7 +38,7 @@ class DatabaseLogger:
         self.current_user_id = user.id
         return user
     
-    def start_workflow(self, user_id: int, state: TripState) -> Workflow:
+    def start_workflow(self, user_id: int, state: TripState, session_id: str = None, workflow_id: str = None) -> Workflow:
         """워크플로우 시작 기록"""
         # state에서 필요한 정보 추출
         time_settings_dict = None
@@ -68,6 +68,8 @@ class DatabaseLogger:
             user_id=user_id,
             user_input=state.get("user_input", ""),
             input_type=state.get("input_type"),
+            session_id=session_id,
+            workflow_id=workflow_id,
             time_settings=time_settings_dict,
             date_theme=date_theme_dict,
             user_intent=user_intent_dict,
@@ -87,6 +89,9 @@ class DatabaseLogger:
         
         self.node_execution_order += 1
         
+        if input_data:
+            input_data = self._serialize_state(input_data)
+        
         node = create_node(
             self.session,
             workflow_id=self.current_workflow_id,
@@ -100,7 +105,7 @@ class DatabaseLogger:
         
         return node
     
-    def log_node_complete(self, node_id: int, state: TripState, 
+    def log_node_complete(self, node_id: str, state: TripState, 
                          output_data: Optional[Dict[str, Any]] = None):
         """노드 실행 완료 기록"""
         node = self.session.query(Node).filter_by(id=node_id).first()
@@ -121,7 +126,7 @@ class DatabaseLogger:
         
         self.session.commit()
     
-    def log_node_error(self, node_id: int, error_message: str, traceback: Optional[str] = None):
+    def log_node_error(self, node_id: str, error_message: str, traceback: Optional[str] = None):
         """노드 실행 에러 기록"""
         node = self.session.query(Node).filter_by(id=node_id).first()
         if not node:
@@ -158,7 +163,7 @@ class DatabaseLogger:
         )
     
     def log_generation(self, model_name: str, user_prompt: str, output: str,
-                      node_id: Optional[int] = None,
+                      node_id: Optional[str] = None,
                       system_prompt: Optional[str] = None,
                       parsed_output: Optional[Dict] = None,
                       model_provider: Optional[str] = None,
@@ -277,7 +282,7 @@ class DatabaseLogger:
         )
         return workflows
     
-    def get_workflow_details(self, workflow_id: int):
+    def get_workflow_details(self, workflow_id: str):
         """워크플로우 상세 정보 조회 (노드 포함)"""
         workflow = self.session.query(Workflow).filter_by(id=workflow_id).first()
         if not workflow:
